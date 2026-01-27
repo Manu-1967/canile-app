@@ -1,31 +1,33 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 
+st.set_page_config(page_title="Canile Soft Online", layout="centered")
 st.title("🐾 Canile Soft Online")
 
-# Creiamo la connessione specificando esplicitamente di usare i Secrets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Sostituisci questo ID con quello del tuo foglio Google
+SHEET_ID = "IL_TUO_ID_LUNGO_QUI" 
 
-def load_data(worksheet_name):
+def load_data_direct(sheet_name):
+    # Formattiamo l'URL per scaricare direttamente il CSV di ogni singola linguetta
+    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
-        # Usiamo 'ttl=0' per evitare che l'errore rimanga in memoria
-        return conn.read(worksheet=worksheet_name, ttl=0)
+        return pd.read_csv(url)
     except Exception as e:
-        # Se fallisce ancora, proviamo il metodo d'emergenza
-        try:
-            url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-            # Trasformiamo l'url in un formato di esportazione diretta CSV
-            csv_url = url.replace("/edit", f"/gviz/tq?tqx=out:csv&sheet={worksheet_name}")
-            return pd.read_csv(csv_url)
-        except:
-            st.error(f"Errore critico sulla tabella: {worksheet_name}")
-            return None
-# Caricamento tabelle
-df_cani = load_data("Cani")
-df_volontari = load_data("Volontari")
-df_luoghi = load_data("Luoghi")
+        st.error(f"Impossibile leggere la tabella: {sheet_name}")
+        return None
 
-# Se i dati sono stati caricati, procediamo con l'app
-if df_cani is not None and df_volontari is not None:
-    st.success("✅ Database sincronizzato!")
-    # ... resto del codice per il programma ...
+# Caricamento dei dati
+df_cani = load_data_direct("Cani")
+df_volontari = load_data_direct("Volontari")
+df_luoghi = load_data_direct("Luoghi")
+
+if df_cani is not None:
+    st.success("✅ Database Collegato con Successo!")
+    
+    # Esempio di visualizzazione per test
+    st.write("### Elenco Cani")
+    st.dataframe(df_cani)
+    
+    # --- LOGICA REGOLE CANILE ---
+    # Qui inseriremo la gestione adiacenze (Lago/Central e Peter/Duca)
+    # E la gestione pasti finale (30 min)
