@@ -4,7 +4,7 @@ import pandas as pd
 st.title("🐾 Canile Soft Online - Test Connessione")
 
 # Inserisci qui il TUO ID del foglio
-SHEET_ID = "IL_TUO_ID_QUI" 
+SHEET_ID = "1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM" 
 
 # Funzione ultra-semplificata
 def test_load():
