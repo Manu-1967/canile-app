@@ -1,49 +1,29 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime, timedelta
-
-# Connessione al database Google Sheets tramite i Secrets TOML
-conn = st.connection("gsheets", type=GSheetsConnection)
 
 st.title("🐾 Canile Soft Online")
 
+# Funzione robusta per leggere i dati con gestione errori
+def load_data(worksheet_name):
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        return conn.read(worksheet=worksheet_name)
+    except Exception as e:
+        st.error(f"❌ Errore nel caricamento della tabella '{worksheet_name}'")
+        st.info("💡 Verifica che:\n1. Il foglio Google sia 'Editor' per chiunque abbia il link.\n"
+                "2. Il nome della linguetta in basso sia esattamente uguale a quello richiesto.")
+        # Mostriamo l'errore tecnico solo in un menu a comparsa per non spaventare i volontari
+        with st.expander("Dettagli tecnici per l'amministratore"):
+            st.write(e)
+        return None
+
 # Caricamento tabelle
-df_cani = conn.read(worksheet="Cani")
-df_volontari = conn.read(worksheet="Volontari")
-df_luoghi = conn.read(worksheet="Luoghi")
+df_cani = load_data("Cani")
+df_volontari = load_data("Volontari")
+df_luoghi = load_data("Luoghi")
 
-# --- LOGICA REGOLE SALVATE ---
-# Ricorda: Lago Park <-> Central Park | Peter Park <-> Duca Park
-# Ricorda: Pasti ultimi 30 minuti
-
-menu = st.sidebar.radio("Navigazione", ["Crea Programma", "Anagrafica"])
-
-if menu == "Crea Programma":
-    st.header("Generazione Turni")
-    data_sel = st.date_input("Data", datetime.now())
-    t_inizio = st.time_input("Inizio", datetime.strptime("08:00", "%H:%M"))
-    t_fine = st.time_input("Fine", datetime.strptime("12:00", "%H:%M"))
-
-    if st.button("Calcola Incastri Automatici"):
-        # 1. Briefing
-        st.info(f"08:00 - Briefing Iniziale (15 min)")
-
-        # 2. Controllo Adiacenze Dinamiche
-        # Se Luogo A è adiacente a Luogo B e Cane1 ha reattività > 5, 
-        # Luogo B viene segnato come 'NON DISPONIBILE'
-        
-        # 3. Gestione Pasti (30 min finali)
-        ora_pasti = (datetime.combine(data_sel, t_fine) - timedelta(minutes=30)).time()
-        st.warning(f"{ora_pasti.strftime('%H:%M')} - Distribuzione Pasti (30 min)")
-
-elif menu == "Anagrafica":
-    st.subheader("Aggiungi un nuovo Cane")
-    with st.form("nuovo_cane"):
-        nome = st.text_input("Nome Cane")
-        reattivita = st.slider("Reattività (1-10)", 1, 10, 5)
-        colore = st.selectbox("Colore", ["Verde", "Arancio", "Rosso", "Nero"])
-        
-        if st.form_submit_button("Salva nel Database Cloud"):
-            # Qui il codice per aggiungere la riga al Google Sheet
-            st.success(f"{nome} aggiunto con successo!")
+# Se i dati sono stati caricati, procediamo con l'app
+if df_cani is not None and df_volontari is not None:
+    st.success("✅ Database sincronizzato!")
+    # ... resto del codice per il programma ...
