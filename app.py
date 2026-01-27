@@ -1,21 +1,18 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
-import pandas as pd
 
 st.title("🐾 Canile Soft Online")
 
-# Funzione robusta per leggere i dati con gestione errori
+# Creiamo la connessione specificando esplicitamente di usare i Secrets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
 def load_data(worksheet_name):
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
+        # Proviamo a leggere il foglio
         return conn.read(worksheet=worksheet_name)
     except Exception as e:
-        st.error(f"❌ Errore nel caricamento della tabella '{worksheet_name}'")
-        st.info("💡 Verifica che:\n1. Il foglio Google sia 'Editor' per chiunque abbia il link.\n"
-                "2. Il nome della linguetta in basso sia esattamente uguale a quello richiesto.")
-        # Mostriamo l'errore tecnico solo in un menu a comparsa per non spaventare i volontari
-        with st.expander("Dettagli tecnici per l'amministratore"):
-            st.write(e)
+        st.error(f"Errore nella tabella {worksheet_name}")
+        st.write("Dettaglio errore:", e)
         return None
 
 # Caricamento tabelle
