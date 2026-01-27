@@ -31,15 +31,18 @@ def init_db():
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS storico (data TEXT, inizio TEXT, fine TEXT, cane TEXT, volontario TEXT, luogo TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS anagrafica_cani (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, strumenti TEXT, attivita TEXT, note TEXT, tempo TEXT)')
+    c.execute('''CREATE TABLE IF NOT EXISTS anagrafica_cani 
+                 (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, 
+                  strumenti TEXT, attivita TEXT, note TEXT, tempo TEXT)''')
     conn.commit(); conn.close()
 
 def load_data(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
-        df = pd.read_csv(url); df.columns = [c.strip().lower() for c in df.columns]
+        df = pd.read_csv(url)
+        df.columns = [c.strip().lower() for c in df.columns]
         return df.dropna(how='all')
-    except: return pd.DataFrame()
+    except: return pd.DataFrame(columns=['nome'])
 
 init_db()
 
@@ -47,23 +50,24 @@ init_db()
 menu = st.sidebar.radio("Navigazione", ["📅 Gestione Turno", "📋 Database Cani"])
 
 if menu == "📅 Gestione Turno":
-    st.title("🐾 Canile Soft - Programmazione")
+    st.title("🐾 Canile Soft - Dashboard")
 
     with st.sidebar:
         data_t = st.date_input("Data", datetime.today())
         ora_i = st.time_input("Inizio", datetime.strptime("08:00", "%H:%M"))
         ora_f = st.time_input("Fine", datetime.strptime("12:00", "%H:%M"))
         st.divider()
-        files = st.file_uploader("Carica PDF Cani", accept_multiple_files=True, type="pdf")
+        files = st.file_uploader("Aggiorna Schede PDF", accept_multiple_files=True, type="pdf")
         if files:
+            conn = sqlite3.connect('canile.db')
             for f in files:
                 d = extract_pdf_data(f)
                 if d:
-                    conn = sqlite3.connect('canile.db')
+                    nome_cane = f.name.split('.')[0].strip().capitalize()
                     conn.execute("INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?)", 
-                                 (f.name.split('.')[0].capitalize(), d['CIBO'], d['GUINZAGLIERIA'], d['STRUMENTI'], d['ATTIVITÀ'], d['NOTE'], d['TEMPO']))
-                    conn.commit(); conn.close()
-            st.success("Database aggiornato")
+                                 (nome_cane, d['CIBO'], d['GUINZAGLIERIA'], d['STRUMENTI'], d['ATTIVITÀ'], d['NOTE'], d['TEMPO']))
+            conn.commit(); conn.close()
+            st.success("Database PDF Aggiornato")
 
     df_c = load_data("Cani"); df_v = load_data("Volontari"); df_l = load_data("Luoghi")
 
@@ -111,60 +115,43 @@ if menu == "📅 Gestione Turno":
     if 'programma' in st.session_state and st.session_state.programma:
         st.divider()
         df_prog = pd.DataFrame(st.session_state.programma).sort_values("Inizio")
-        # Rimuoviamo 'Inizio' dalla visualizzazione finale per pulizia se abbiamo già 'Orario'
-        df_prog_view = df_prog.drop(columns=['Inizio'])
-        st.dataframe(df_prog_view, use_container_width=True)
+        df_view = df_prog.drop(columns=['Inizio'])
+        st.dataframe(df_view, use_container_width=True)
 
         b1, b2, b3 = st.columns(3)
         if b1.button("💾 Salva Storico", use_container_width=True):
             conn = sqlite3.connect('canile.db')
             for r in st.session_state.programma:
                 conn.execute("INSERT INTO storico VALUES (?,?,?,?,?,?)", (str(data_t), r['Inizio'], "-", r['Cane'], r['Volontario'], r['Luogo']))
-            conn.commit(); conn.close(); st.success("Salvato!")
+            conn.commit(); conn.close(); st.success("Dati salvati in canile.db")
         
-        # --- EXPORT EXCEL OTTIMIZZATO ---
+        # --- EXPORT EXCEL CON XLSWRITE ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_prog_view.to_excel(writer, index=False, sheet_name='Turno')
+            df_view.to_excel(writer, index=False, sheet_name='Turno')
             workbook = writer.book
             worksheet = writer.sheets['Turno']
             
-            # Formato: Testo a capo, Allineamento in alto, Bordo
-            text_format = workbook.add_format({
-                'text_wrap': True, 
-                'valign': 'top', 
-                'align': 'left',
-                'border': 1
-            })
+            # Formati
+            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
+            cell_fmt = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1})
             
-            # Formato Intestazione
-            header_format = workbook.add_format({
-                'bold': True,
-                'bg_color': '#D7E4BC',
-                'border': 1,
-                'valign': 'vcenter',
-                'align': 'center'
-            })
+            for i, col in enumerate(df_view.columns):
+                worksheet.write(0, i, col, header_fmt)
+                width = 35 if col in ['Note', 'Attività', 'Cibo', 'Guinzaglieria', 'Strumenti'] else 15
+                worksheet.set_column(i, i, width, cell_fmt)
 
-            # Applicazione larghezze differenziate
-            # 'Orario', 'Cane', 'Volontario', 'Luogo' -> Strette
-            # 'Cibo', 'Note', 'Attività', 'Strumenti', 'Guinzaglieria' -> Larghe
-            for i, col in enumerate(df_prog_view.columns):
-                worksheet.write(0, i, col, header_format) # Riscrive intestazione con stile
-                
-                if col in ['Note', 'Attività', 'Cibo', 'Guinzaglieria', 'Strumenti']:
-                    worksheet.set_column(i, i, 35, text_format) # Colonne larghe
-                elif col in ['Orario']:
-                    worksheet.set_column(i, i, 12, text_format) # Orario stretto
-                else:
-                    worksheet.set_column(i, i, 18, text_format) # Colonne medie (Cane, Volontario, Luogo)
-            
-            # Imposta altezza righe automatica non necessaria con wrap, 
-            # ma xlsxwriter lo gestisce bene col formato text_wrap.
-
-        b2.download_button("📊 Scarica Excel (Leggibile)", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
-        if b3.button("🗑️ Svuota Tutto", use_container_width=True): st.session_state.programma = []; st.rerun()
+        b2.download_button("📊 Scarica Excel Leggibile", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
+        if b3.button("🗑️ Svuota Tutto", use_container_width=True): 
+            st.session_state.programma = []
+            st.rerun()
 
 elif menu == "📋 Database Cani":
-    st.title("📋 Database Persistente")
-    st.dataframe(pd.read_sql_query("SELECT * FROM anagrafica_cani", sqlite3.connect('canile.db')), use_container_width=True)
+    st.title("📋 Anagrafica Cani")
+    conn = sqlite3.connect('canile.db')
+    try:
+        df_ana = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
+        st.dataframe(df_ana, use_container_width=True)
+    except:
+        st.info("Database anagrafico non ancora popolato.")
+    conn.close()
