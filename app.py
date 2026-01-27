@@ -6,7 +6,7 @@ st.set_page_config(page_title="Canile Soft Online", layout="wide")
 
 # --- CONFIGURAZIONE MANUALE (Sostituisci solo l'ID) ---
 # Prendi l'ID dal tuo URL: https://docs.google.com/spreadsheets/d/IL_TUO_ID_QUI/edit
-SHEET_ID = "1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM" 
+SHEET_ID = "1p07N8_AInX9o0P_fF7D_q00Ie0yN7lX0e_ZzZzZzZz" 
 
 def get_google_sheet(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
