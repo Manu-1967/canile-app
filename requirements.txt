@@ -3,3 +3,5 @@ st-gsheets-connection
 pandas
 pdfplumber
 PyPDF2
+pandas
+streamlit
