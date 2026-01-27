@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Canile Soft - Gestione Turno", layout="wide")
+st.set_page_config(page_title="Canile Soft - Programma", layout="wide")
 
 SHEET_ID = "1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM"
 
@@ -10,6 +10,7 @@ def load_data(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
+        df.columns = [c.strip().lower() for c in df.columns]
         return df.dropna(how='all')
     except:
         return pd.DataFrame()
@@ -19,60 +20,85 @@ df_cani_db = load_data("Cani")
 df_volontari_db = load_data("Volontari")
 df_luoghi_db = load_data("Luoghi")
 
-st.title("🐾 Canile Soft Online - Configurazione Turno")
+st.title("🐾 Canile Soft Online - Gestione Turno")
 
-# --- STEP 1: IMPOSTAZIONI GENERALI ---
-with st.expander("📅 1. Impostazioni Orario e Data", expanded=True):
+# --- 1. IMPOSTAZIONI TURNI ---
+with st.expander("📅 1. Orario e Data", expanded=True):
     c1, c2, c3 = st.columns(3)
     data_turno = c1.date_input("Data del turno", datetime.today())
     ora_inizio = c2.time_input("Inizio Turno", datetime.strptime("08:00", "%H:%M"))
     ora_fine = c3.time_input("Fine Turno", datetime.strptime("12:00", "%H:%M"))
 
-# --- STEP 2: DISPONIBILITÀ DEL GIORNO ---
-st.header("✅ 2. Seleziona Disponibili per oggi")
-
+# --- 2. SELEZIONE DISPONIBILI (I "PRESENTI") ---
+st.header("✅ 2. Check-in Disponibilità")
 col_c, col_v, col_l = st.columns(3)
 
 with col_c:
     st.subheader("Cani")
-    cani_presenti = st.multiselect("Quali cani escono?", df_cani_db['nome'].tolist(), default=df_cani_db['nome'].tolist())
+    lista_c = df_cani_db['nome'].tolist() if 'nome' in df_cani_db.columns else []
+    cani_oggi = st.multiselect("Cani pronti per uscita", lista_c, default=lista_c)
 
 with col_v:
     st.subheader("Volontari")
-    vol_presenti = st.multiselect("Chi è presente?", df_volontari_db['nome'].tolist(), default=df_volontari_db['nome'].tolist())
+    lista_v = df_volontari_db['nome'].tolist() if 'nome' in df_volontari_db.columns else []
+    vol_oggi = st.multiselect("Volontari in turno", lista_v, default=lista_v)
 
 with col_l:
     st.subheader("Luoghi")
-    # Escludiamo Duca Park dal default per sicurezza, ma è selezionabile
-    luoghi_base = [l for l in df_luoghi_db['nome'].tolist() if "Duca" not in l]
-    luoghi_presenti = st.multiselect("Quali campi usiamo?", df_luoghi_db['nome'].tolist(), default=luoghi_base)
+    lista_l = df_luoghi_db['nome'].tolist() if 'nome' in df_luoghi_db.columns else []
+    luoghi_oggi = st.multiselect("Campi agibili oggi", lista_l, default=lista_l)
 
-# --- STEP 3: GENERAZIONE PROGRAMMA ---
+# --- 3. GENERAZIONE E COLLEGAMENTO MANUALE ---
 st.divider()
-if st.button("🚀 Genera Programma con questi dati"):
-    if not cani_presenti or not vol_presenti or not luoghi_presenti:
-        st.error("Devi selezionare almeno un cane, un volontario e un luogo!")
-    else:
-        st.success(f"Programma in generazione per il {data_turno} dalle {ora_inizio} alle {ora_fine}")
-        
-        # Filtriamo i dataframe in base alle scelte fatte sopra
-        cani_oggi = df_cani_db[df_cani_db['nome'].isin(cani_presenti)]
-        vol_oggi = df_volontari_db[df_volontari_db['nome'].isin(vol_presenti)]
-        luoghi_oggi = df_luoghi_db[df_luoghi_db['nome'].isin(luoghi_presenti)]
+st.header("🔗 3. Assegnazioni e Programma")
 
-        # Visualizzazione Tabella Lavoro
-        st.write("### 📋 Bozza Programma Attività")
-        
-        # Logica adiacenze dinamica
-        for _, luogo in luoghi_oggi.iterrows():
-            if pd.notna(luogo['adiacente']):
-                if luogo['adiacente'] in luoghi_presenti:
-                    st.warning(f"⚠️ Attenzione: **{luogo['nome']}** e **{luogo['adiacente']}** sono entrambi attivi. Non mettere cani reattivi vicini.")
+if not (cani_oggi and vol_oggi and luoghi_oggi):
+    st.info("Seleziona i presenti per procedere con le assegnazioni.")
+else:
+    # Creiamo uno spazio per le assegnazioni manuali
+    if 'programma' not in st.session_state:
+        st.session_state.programma = []
 
-        # Logica Pasti (Sempre 30 min prima della fine)
-        pasti_dt = datetime.combine(data_turno, ora_fine) - timedelta(minutes=30)
+    with st.form("aggiungi_assegnazione"):
+        st.write("**Aggiungi accoppiata**")
+        a1, a2, a3 = st.columns(3)
+        v_sel = a1.selectbox("Seleziona Volontario", vol_oggi)
+        c_sel = a2.selectbox("Seleziona Cane", cani_oggi)
+        l_sel = a3.selectbox("Seleziona Luogo", luoghi_oggi)
         
-        st.error(f"🥣 ORE {pasti_dt.strftime('%H:%M')} - FINE ATTIVITÀ E DISTRIBUZIONE PASTI (30 min)")
+        submit = st.form_submit_button("Aggiungi al Programma")
+        
+        if submit:
+            # Controllo adiacenze dinamico basato su anagrafica
+            col_adj = next((c for c in df_luoghi_db.columns if 'adiacen' in c), None)
+            alert_msg = ""
+            if col_adj:
+                # Trova se il luogo selezionato ha un'adiacenza definita nel DB
+                info_luogo = df_luoghi_db[df_luoghi_db['nome'] == l_sel]
+                if not info_luogo.empty:
+                    adj_val = str(info_luogo[col_adj].values[0])
+                    # Se l'adiacente è tra quelli scelti per oggi, avvisa
+                    if adj_val in luoghi_oggi:
+                        alert_msg = f"⚠️ Nota: {l_sel} è adiacente a {adj_val}."
 
-        # Qui potrai procedere al link manuale o automatico
-        st.info("💡 Ora puoi procedere a collegare i volontari ai cani selezionati.")
+            st.session_state.programma.append({
+                "Volontario": v_sel,
+                "Cane": c_sel,
+                "Luogo": l_sel,
+                "Avviso": alert_msg
+            })
+
+    # Visualizzazione Tabella Programma
+    if st.session_state.programma:
+        st.write("### 📝 Riepilogo Attività")
+        df_prog = pd.DataFrame(st.session_state.programma)
+        st.table(df_prog)
+        
+        if st.button("Pulisci Programma"):
+            st.session_state.programma = []
+            st.rerun()
+
+    # --- LOGICA PASTI FISSA ---
+    st.write("---")
+    pasti_dt = datetime.combine(data_turno, ora_fine) - timedelta(minutes=30)
+    st.error(f"🥣 ORE {pasti_dt.strftime('%H:%M')} - FINE TURNO: Distribuzione Pasti (30 min)")
