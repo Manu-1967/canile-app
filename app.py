@@ -63,7 +63,7 @@ if menu == "📅 Gestione Turno":
                     conn.execute("INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?)", 
                                  (f.name.split('.')[0].capitalize(), d['CIBO'], d['GUINZAGLIERIA'], d['STRUMENTI'], d['ATTIVITÀ'], d['NOTE'], d['TEMPO']))
                     conn.commit(); conn.close()
-            st.success("Dati aggiornati")
+            st.success("Database aggiornato")
 
     df_c = load_data("Cani"); df_v = load_data("Volontari"); df_l = load_data("Luoghi")
 
@@ -111,7 +111,9 @@ if menu == "📅 Gestione Turno":
     if 'programma' in st.session_state and st.session_state.programma:
         st.divider()
         df_prog = pd.DataFrame(st.session_state.programma).sort_values("Inizio")
-        st.dataframe(df_prog, use_container_width=True)
+        # Rimuoviamo 'Inizio' dalla visualizzazione finale per pulizia se abbiamo già 'Orario'
+        df_prog_view = df_prog.drop(columns=['Inizio'])
+        st.dataframe(df_prog_view, use_container_width=True)
 
         b1, b2, b3 = st.columns(3)
         if b1.button("💾 Salva Storico", use_container_width=True):
@@ -120,25 +122,47 @@ if menu == "📅 Gestione Turno":
                 conn.execute("INSERT INTO storico VALUES (?,?,?,?,?,?)", (str(data_t), r['Inizio'], "-", r['Cane'], r['Volontario'], r['Luogo']))
             conn.commit(); conn.close(); st.success("Salvato!")
         
-        # EXPORT EXCEL FORMATTATO
+        # --- EXPORT EXCEL OTTIMIZZATO ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_prog.to_excel(writer, index=False, sheet_name='Turno')
+            df_prog_view.to_excel(writer, index=False, sheet_name='Turno')
             workbook = writer.book
             worksheet = writer.sheets['Turno']
             
-            # Formato testo a capo
-            wrap_format = workbook.add_format({'text_wrap': True, 'valign': 'top'})
+            # Formato: Testo a capo, Allineamento in alto, Bordo
+            text_format = workbook.add_format({
+                'text_wrap': True, 
+                'valign': 'top', 
+                'align': 'left',
+                'border': 1
+            })
             
-            # Applica larghezza colonne e wrap text
-            for i, col in enumerate(df_prog.columns):
-                # Imposta larghezza fissa per colonne di testo lungo (es. Note, Attività)
-                if col in ['Note', 'Attività', 'Cibo', 'Guinzaglieria']:
-                    worksheet.set_column(i, i, 40, wrap_format)
+            # Formato Intestazione
+            header_format = workbook.add_format({
+                'bold': True,
+                'bg_color': '#D7E4BC',
+                'border': 1,
+                'valign': 'vcenter',
+                'align': 'center'
+            })
+
+            # Applicazione larghezze differenziate
+            # 'Orario', 'Cane', 'Volontario', 'Luogo' -> Strette
+            # 'Cibo', 'Note', 'Attività', 'Strumenti', 'Guinzaglieria' -> Larghe
+            for i, col in enumerate(df_prog_view.columns):
+                worksheet.write(0, i, col, header_format) # Riscrive intestazione con stile
+                
+                if col in ['Note', 'Attività', 'Cibo', 'Guinzaglieria', 'Strumenti']:
+                    worksheet.set_column(i, i, 35, text_format) # Colonne larghe
+                elif col in ['Orario']:
+                    worksheet.set_column(i, i, 12, text_format) # Orario stretto
                 else:
-                    worksheet.set_column(i, i, 15, wrap_format)
-        
-        b2.download_button("📊 Scarica Excel Formattato", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
+                    worksheet.set_column(i, i, 18, text_format) # Colonne medie (Cane, Volontario, Luogo)
+            
+            # Imposta altezza righe automatica non necessaria con wrap, 
+            # ma xlsxwriter lo gestisce bene col formato text_wrap.
+
+        b2.download_button("📊 Scarica Excel (Leggibile)", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
         if b3.button("🗑️ Svuota Tutto", use_container_width=True): st.session_state.programma = []; st.rerun()
 
 elif menu == "📋 Database Cani":
