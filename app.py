@@ -8,13 +8,18 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data(worksheet_name):
     try:
-        # Proviamo a leggere il foglio
-        return conn.read(worksheet=worksheet_name)
+        # Usiamo 'ttl=0' per evitare che l'errore rimanga in memoria
+        return conn.read(worksheet=worksheet_name, ttl=0)
     except Exception as e:
-        st.error(f"Errore nella tabella {worksheet_name}")
-        st.write("Dettaglio errore:", e)
-        return None
-
+        # Se fallisce ancora, proviamo il metodo d'emergenza
+        try:
+            url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+            # Trasformiamo l'url in un formato di esportazione diretta CSV
+            csv_url = url.replace("/edit", f"/gviz/tq?tqx=out:csv&sheet={worksheet_name}")
+            return pd.read_csv(csv_url)
+        except:
+            st.error(f"Errore critico sulla tabella: {worksheet_name}")
+            return None
 # Caricamento tabelle
 df_cani = load_data("Cani")
 df_volontari = load_data("Volontari")
