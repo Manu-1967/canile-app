@@ -5,7 +5,7 @@ st.set_page_config(page_title="Canile Soft Online", layout="centered")
 st.title("🐾 Canile Soft Online")
 
 # Sostituisci questo ID con quello del tuo foglio Google
-SHEET_ID = "IL_TUO_ID_LUNGO_QUI" 
+SHEET_ID = "1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM" 
 
 def load_data_direct(sheet_name):
     # Formattiamo l'URL per scaricare direttamente il CSV di ogni singola linguetta
