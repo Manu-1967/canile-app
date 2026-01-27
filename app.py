@@ -67,21 +67,21 @@ if menu == "📅 Gestione Turno":
                     conn.execute("INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?)", 
                                  (nome_cane, d['CIBO'], d['GUINZAGLIERIA'], d['STRUMENTI'], d['ATTIVITÀ'], d['NOTE'], d['TEMPO']))
             conn.commit(); conn.close()
-            st.success("Database PDF Aggiornato")
+            st.success("Dati PDF Aggiornati")
 
     df_c = load_data("Cani"); df_v = load_data("Volontari"); df_l = load_data("Luoghi")
 
     st.subheader("✅ 1. Check-in Disponibilità")
-    c1, c2, c3 = st.columns(3)
+    c1, col2, col3 = st.columns(3)
     c_p = c1.multiselect("Cani", df_c['nome'].tolist() if 'nome' in df_c.columns else [], default=df_c['nome'].tolist())
-    v_p = c2.multiselect("Volontari", df_v['nome'].tolist() if 'nome' in df_v.columns else [], default=df_v['nome'].tolist())
-    l_p = c3.multiselect("Campi", df_l['nome'].tolist() if 'nome' in df_l.columns else [], default=df_l['nome'].tolist())
+    v_p = col2.multiselect("Volontari", df_v['nome'].tolist() if 'nome' in df_v.columns else [], default=df_v['nome'].tolist())
+    l_p = col3.multiselect("Campi", df_l['nome'].tolist() if 'nome' in df_l.columns else [], default=df_l['nome'].tolist())
 
     st.divider()
     if c_p and v_p and l_p:
         st.subheader("🔗 2. Nuova Attività")
-        col1, col2, col3 = st.columns(3)
-        sel_c = col1.selectbox("Cane", c_p)
+        r1 = st.columns(3)
+        sel_c = r1[0].selectbox("Cane", c_p)
         
         conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
         info = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (sel_c.capitalize(),)).fetchone()
@@ -89,16 +89,17 @@ if menu == "📅 Gestione Turno":
         conn.close()
         
         v_nome = v_sug['volontario'].iloc[0] if not v_sug.empty else None
-        sel_v = col2.selectbox("Volontario", v_p, index=v_p.index(v_nome) if v_nome in v_p else 0)
-        sel_l = col3.selectbox("Luogo", l_p)
+        sel_v = r1[1].selectbox("Volontario", v_p, index=v_p.index(v_nome) if v_nome in v_p else 0)
+        sel_l = r1[2].selectbox("Luogo", l_p)
 
+        r2 = st.columns(2)
         t_start = datetime.combine(data_t, ora_i) + timedelta(minutes=15)
-        h_dal = col1.time_input("Inizio", t_start.time())
+        h_dal = r2[0].time_input("Inizio", t_start.time())
         durata_min = 30
         if info:
             try: durata_min = int(re.search(r'\d+', info['tempo']).group())
             except: pass
-        h_al = col2.time_input("Fine", (datetime.combine(data_t, h_dal) + timedelta(minutes=durata_min)).time())
+        h_al = r2[1].time_input("Fine", (datetime.combine(data_t, h_dal) + timedelta(minutes=durata_min)).time())
 
         if st.button("➕ Aggiungi al Programma", use_container_width=True):
             if 'programma' not in st.session_state: st.session_state.programma = []
@@ -123,25 +124,33 @@ if menu == "📅 Gestione Turno":
             conn = sqlite3.connect('canile.db')
             for r in st.session_state.programma:
                 conn.execute("INSERT INTO storico VALUES (?,?,?,?,?,?)", (str(data_t), r['Inizio'], "-", r['Cane'], r['Volontario'], r['Luogo']))
-            conn.commit(); conn.close(); st.success("Dati salvati in canile.db")
+            conn.commit(); conn.close(); st.success("Salvato!")
         
-        # --- EXPORT EXCEL CON XLSWRITE ---
+        # --- EXPORT EXCEL COMPATTO ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_view.to_excel(writer, index=False, sheet_name='Turno')
             workbook = writer.book
             worksheet = writer.sheets['Turno']
             
-            # Formati
-            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
-            cell_fmt = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1})
+            # Formati: Testo piccolo e a capo
+            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#EBF1DE', 'border': 1, 'align': 'center', 'font_size': 10})
+            cell_fmt = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1, 'font_size': 9})
             
             for i, col in enumerate(df_view.columns):
                 worksheet.write(0, i, col, header_fmt)
-                width = 35 if col in ['Note', 'Attività', 'Cibo', 'Guinzaglieria', 'Strumenti'] else 15
+                # Riduzione larghezza per forzare il ritorno a capo
+                if col in ['Note', 'Attività', 'Cibo']:
+                    width = 22
+                elif col in ['Guinzaglieria', 'Strumenti']:
+                    width = 18
+                elif col in ['Orario']:
+                    width = 12
+                else:
+                    width = 15
                 worksheet.set_column(i, i, width, cell_fmt)
 
-        b2.download_button("📊 Scarica Excel Leggibile", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
+        b2.download_button("📊 Scarica Excel Compatto", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
         if b3.button("🗑️ Svuota Tutto", use_container_width=True): 
             st.session_state.programma = []
             st.rerun()
@@ -153,5 +162,5 @@ elif menu == "📋 Database Cani":
         df_ana = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
         st.dataframe(df_ana, use_container_width=True)
     except:
-        st.info("Database anagrafico non ancora popolato.")
+        st.info("Database vuoto.")
     conn.close()
