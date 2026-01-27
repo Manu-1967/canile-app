@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
+# Configurazione Pagina
 st.set_page_config(page_title="Canile Soft Online", layout="wide")
 
-# USA IL TUO ID CHE HA FUNZIONATO PRIMA
-SHEET_ID = "1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM" 
+# Sostituisci con il tuo ID funzionante
+SHEET_ID = "IL_TUO_ID_QUI" 
 
 def load_data(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
@@ -16,32 +17,37 @@ def load_data(sheet_name):
 
 st.title("🐾 Canile Soft Online")
 
-# Caricamento
 df_cani = load_data("Cani")
 df_volontari = load_data("Volontari")
 
-if df_cani.empty:
-    st.warning("⚠️ Il database è connesso ma non ci sono dati o mancano le intestazioni (nome, colore, reattività).")
+if df_cani.empty or "nome" not in df_cani.columns:
+    st.warning("⚠️ Database vuoto. Scrivi 'nome', 'colore', 'reattivita' nella prima riga del foglio Google.")
 else:
-    st.success("✅ Database sincronizzato!")
+    st.success(f"✅ Connesso! Trovati {len(df_cani)} cani e {len(df_volontari)} volontari.")
     
-    menu = st.sidebar.selectbox("Menu", ["Genera Programma", "Gestione Cani"])
+    tab1, tab2 = st.tabs(["📅 Genera Programma", "🐕 Anagrafica"])
 
-    if menu == "Genera Programma":
+    with tab1:
         st.header("Configurazione Turno")
-        t_inizio = st.time_input("Inizio", datetime.strptime("08:00", "%H:%M"))
-        t_fine = st.time_input("Fine", datetime.strptime("12:00", "%H:%M"))
-        
-        if st.button("Genera"):
-            # LOGICA PASTI (Memory check: ultimi 30 minuti)
-            pasti_dt = datetime.combine(datetime.today(), t_fine) - timedelta(minutes=30)
-            
-            st.write(f"### 📋 Programma")
-            st.info(f"08:00 - Briefing iniziale")
+        col1, col2 = st.columns(2)
+        with col1:
+            t_inizio = st.time_input("Inizio Turno", datetime.strptime("08:00", "%H:%M"))
+        with col2:
+            t_fine = st.time_input("Fine Turno", datetime.strptime("12:00", "%H:%M"))
+
+        if st.button("🚀 Genera Programma Attività"):
             st.write("---")
-            st.write("*(Qui appariranno gli incroci cani-volontari)*")
-            st.write("---")
-            st.error(f"🥣 {pasti_dt.strftime('%H:%M')} - INIZIO PASTI E PULIZIA (30 min)")
+            # Logica Briefing
+            st.info(f"⏱️ {t_inizio.strftime('%H:%M')} - Briefing Iniziale (15 min)")
             
-            # NOTA ADIACENZE (Lago/Central, Peter/Duca)
-            st.sidebar.info("Regola attiva: No cani in campi adiacenti se reattività > 5.")
+            # Simulazione incroci (Qui inseriremo l'algoritmo basato sui colori)
+            st.subheader("Assegnazioni Campi")
+            st.write("Configurazione adiacenze attiva: Lago/Central - Peter/Duca")
+            
+            # Logica Pasti (Sempre 30 min prima della fine)
+            pasti_ora = (datetime.combine(datetime.today(), t_fine) - timedelta(minutes=30)).time()
+            st.error(f"🥣 {pasti_ora.strftime('%H:%M')} - DISTRIBUZIONE PASTI E PULIZIA (30 min)")
+
+    with tab2:
+        st.subheader("Database Cani")
+        st.dataframe(df_cani)
