@@ -46,8 +46,20 @@ def load_data(sheet_name):
 
 init_db()
 
+# --- DEFINIZIONE LARGHEZZE COLONNE (UNIFORMATE) ---
+# Usiamo questa configurazione sia per il programma che per l'anagrafica
+CONFIG_COLONNE = {
+    "nome": st.column_config.TextColumn("Cane", width="medium", help="Nome del cane"),
+    "cibo": st.column_config.TextColumn("Cibo", width="large"),
+    "note": st.column_config.TextColumn("Note", width="large"),
+    "attivita": st.column_config.TextColumn("Attività", width="large"),
+    "guinzaglieria": st.column_config.TextColumn("Guinzaglieria", width="medium"),
+    "strumenti": st.column_config.TextColumn("Strumenti", width="medium"),
+    "tempo": st.column_config.TextColumn("Tempo", width="small")
+}
+
 # --- NAVIGAZIONE ---
-menu = st.sidebar.radio("Navigazione", ["📅 Gestione Turno", "📋 Database Cani"])
+menu = st.sidebar.radio("Navigazione", ["📅 Gestione Turno", "📋 Anagrafica Cani"])
 
 if menu == "📅 Gestione Turno":
     st.title("🐾 Canile Soft - Dashboard")
@@ -57,7 +69,7 @@ if menu == "📅 Gestione Turno":
         ora_i = st.time_input("Inizio", datetime.strptime("08:00", "%H:%M"))
         ora_f = st.time_input("Fine", datetime.strptime("12:00", "%H:%M"))
         st.divider()
-        files = st.file_uploader("Aggiorna Schede PDF", accept_multiple_files=True, type="pdf")
+        files = st.file_uploader("Carica PDF Cani", accept_multiple_files=True, type="pdf")
         if files:
             conn = sqlite3.connect('canile.db')
             for f in files:
@@ -117,7 +129,9 @@ if menu == "📅 Gestione Turno":
         st.divider()
         df_prog = pd.DataFrame(st.session_state.programma).sort_values("Inizio")
         df_view = df_prog.drop(columns=['Inizio'])
-        st.dataframe(df_view, use_container_width=True)
+        
+        # Visualizzazione tabella con ritorno a capo
+        st.dataframe(df_view, use_container_width=True, hide_index=True)
 
         b1, b2, b3 = st.columns(3)
         if b1.button("💾 Salva Storico", use_container_width=True):
@@ -126,41 +140,44 @@ if menu == "📅 Gestione Turno":
                 conn.execute("INSERT INTO storico VALUES (?,?,?,?,?,?)", (str(data_t), r['Inizio'], "-", r['Cane'], r['Volontario'], r['Luogo']))
             conn.commit(); conn.close(); st.success("Salvato!")
         
-        # --- EXPORT EXCEL COMPATTO ---
+        # EXPORT EXCEL
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_view.to_excel(writer, index=False, sheet_name='Turno')
             workbook = writer.book
             worksheet = writer.sheets['Turno']
-            
-            # Formati: Testo piccolo e a capo
-            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#EBF1DE', 'border': 1, 'align': 'center', 'font_size': 10})
             cell_fmt = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1, 'font_size': 9})
-            
             for i, col in enumerate(df_view.columns):
-                worksheet.write(0, i, col, header_fmt)
-                # Riduzione larghezza per forzare il ritorno a capo
-                if col in ['Note', 'Attività', 'Cibo']:
-                    width = 22
-                elif col in ['Guinzaglieria', 'Strumenti']:
-                    width = 18
-                elif col in ['Orario']:
-                    width = 12
-                else:
-                    width = 15
+                width = 22 if col in ['Note', 'Attività', 'Cibo'] else 15
                 worksheet.set_column(i, i, width, cell_fmt)
 
-        b2.download_button("📊 Scarica Excel Compatto", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
+        b2.download_button("📊 Scarica Excel", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
         if b3.button("🗑️ Svuota Tutto", use_container_width=True): 
             st.session_state.programma = []
             st.rerun()
 
-elif menu == "📋 Database Cani":
-    st.title("📋 Anagrafica Cani")
+elif menu == "📋 Anagrafica Cani":
+    st.title("📋 Database Persistente")
+    st.write("Dati estratti dai PDF. Le colonne seguono le dimensioni del file Excel.")
+    
     conn = sqlite3.connect('canile.db')
     try:
         df_ana = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
-        st.dataframe(df_ana, use_container_width=True)
+        
+        # --- TABELLA ANAGRAFICA CON STESSE DIMENSIONI ---
+        st.dataframe(
+            df_ana,
+            use_container_width=True,
+            column_config=CONFIG_COLONNE,
+            hide_index=True
+        )
+        
+        st.divider()
+        c_del = st.selectbox("Seleziona un cane da rimuovere", df_ana['nome'].tolist())
+        if st.button(f"🗑️ Elimina scheda di {c_del}"):
+            conn.execute("DELETE FROM anagrafica_cani WHERE nome=?", (c_del,))
+            conn.commit(); st.rerun()
+            
     except:
-        st.info("Database vuoto.")
+        st.info("Nessun dato presente. Carica i PDF nella pagina Programma.")
     conn.close()
