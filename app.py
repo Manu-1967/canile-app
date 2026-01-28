@@ -139,40 +139,76 @@ with tab_programma:
             campi_liberi = [l for l in l_p if l not in campi_occupati and l not in campi_vietati]
             
             # Assegnazione Cani
+            # --- ASSEGNAZIONE INTELLIGENTE ---
             while cani_da_fare and campi_liberi and vols_slot:
+                
+                # 1. SCELTA DEL CANE (Priorità a chi ha preferenze di campo vincolanti)
+                # Ordiniamo i cani: prima quelli che hanno un luogo preferito DISPONIBILE ORA
+                cani_da_fare.sort(key=lambda c: 1 if c in LUOGHI_PREFERITI and any(l in campi_liberi for l in LUOGHI_PREFERITI[c]) else 0, reverse=True)
+                
                 cane = cani_da_fare.pop(0)
-                campo = campi_liberi.pop(0)
                 
-                if campo in CONFLITTI and CONFLITTI[campo] in campi_liberi:
-                    campi_liberi.remove(CONFLITTI[campo])
+                # 2. SCELTA DEL CAMPO
+                # Se il cane ha un luogo preferito ed è libero, prendilo. Altrimenti prendi il primo libero.
+                campo_scelto = None
+                if cane in LUOGHI_PREFERITI:
+                    for pref in LUOGHI_PREFERITI[cane]:
+                        if pref in campi_liberi:
+                            campo_scelto = pref
+                            break
                 
-                # SELEZIONE VOLONTARIO (Priorità Storico)
-                best_vol = None
-                vols_con_punteggio = []
-                for v in vols_slot:
-                    cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
-                    vols_con_punteggio.append((v, cnt))
+                if not campo_scelto:
+                    campo_scelto = campi_liberi[0] # Fallback sul primo disponibile
                 
-                vols_con_punteggio.sort(key=lambda x: x[1], reverse=True)
+                # Rimuovi il campo scelto e gestisci i conflitti
+                campi_liberi.remove(campo_scelto)
+                if campo_scelto in CONFLITTI and CONFLITTI[campo_scelto] in campi_liberi:
+                    campi_liberi.remove(CONFLITTI[campo_scelto]) # Blocca il campo adiacente
                 
-                if vols_con_punteggio:
+                # 3. SELEZIONE VOLONTARIO (Affinità > Storico)
+                v_main = None
+                
+                # A) CONTROLLO AFFINITÀ (Priorità Massima)
+                if cane in AFFINITA:
+                    for preferito in AFFINITA[cane]:
+                        if preferito in vols_slot:
+                            v_main = preferito
+                            break # Trovato il preferito!
+                
+                # B) CONTROLLO STORICO (Se non c'è affinità o il preferito non c'è)
+                if not v_main:
+                    vols_con_punteggio = []
+                    for v in vols_slot:
+                        # Conta quante volte questo volontario è uscito con questo cane
+                        cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
+                        vols_con_punteggio.append((v, cnt))
+                    
+                    # Ordina per esperienza decrescente
+                    vols_con_punteggio.sort(key=lambda x: x[1], reverse=True)
                     v_main = vols_con_punteggio[0][0]
+
+                # Rimuovi il volontario scelto dalla lista disponibili
+                if v_main in vols_slot:
                     vols_slot.remove(v_main)
-                    v_str = v_main
-                    
-                    if len(vols_slot) > len(cani_da_fare):
-                        sup = vols_slot.pop(0)
-                        v_str += f"\n+ {sup} (Sup.)"
-                    
-                    info = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (cane.capitalize(),)).fetchone()
-                    
-                    st.session_state.programma.append({
-                        "Orario": f"{curr_t.strftime('%H:%M')} - {(curr_t+timedelta(minutes=30)).strftime('%H:%M')}",
-                        "Cane": cane, "Volontario": v_str, "Luogo": campo,
-                        "Cibo": info['cibo'] if info else "-", "Note": info['note'] if info else "-",
-                        "Attività": info['attivita'] if info else "Uscita",
-                        "Inizio_Sort": curr_t.strftime('%H:%M'), "Tipo": "Auto"
-                    })
+                
+                v_str = v_main
+                
+                # --- ASSEGNAZIONE SUPPORTO ---
+                # (Resta uguale a prima)
+                if len(vols_slot) > len(cani_da_fare):
+                    sup = vols_slot.pop(0)
+                    v_str += f"\n+ {sup} (Sup.)"
+                
+                # Info DB e Salvataggio
+                info = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (cane.capitalize(),)).fetchone()
+                
+                st.session_state.programma.append({
+                    "Orario": f"{curr_t.strftime('%H:%M')} - {(curr_t+timedelta(minutes=30)).strftime('%H:%M')}",
+                    "Cane": cane, "Volontario": v_str, "Luogo": campo_scelto,
+                    "Cibo": info['cibo'] if info else "-", "Note": info['note'] if info else "-",
+                    "Attività": info['attivita'] if info else "Uscita",
+                    "Inizio_Sort": curr_t.strftime('%H:%M'), "Tipo": "Auto"
+                })
 
             curr_t += timedelta(minutes=30)
 
