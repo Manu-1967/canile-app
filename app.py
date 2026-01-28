@@ -10,10 +10,26 @@ import io
 st.set_page_config(page_title="Canile Soft - Mobile Optimized", layout="wide")
 
 # Mappa conflitti spaziali (da memoria utente)
+# --- CONFIGURAZIONE E STILI ---
+st.set_page_config(page_title="Canile Soft - Mobile Optimized", layout="wide")
+
+# Mappa conflitti spaziali (da memoria utente)
 CONFLITTI = {
-    "Lago Park": "Central Park", "Central Park": "Lago Park",
-    "Peter Park": "Duca Park", "Duca Park": "Peter Park"
+    "Parco Lago": "Parco Central", "Parco Central": "Parco Lago",
+    "Parco Peter": "Parco Duca", "Parco Duca": "Parco Peter"
 }
+
+# --- AGGIUNGI QUESTE RIGHE QUI ---
+AFFINITA = {
+    "Rex": ["Mario", "Luca"],      # Esempio: Rex preferisce Mario o Luca
+    "Panna": ["Anna"]
+}
+
+LUOGHI_PREFERITI = {
+    "Balto": ["Parco Lago"],        # Esempio: Balto preferisce Parco Lago 
+    "Rocky": ["Parco Central"]
+}
+# ---------------------------------
 
 COLOR_MAP = {"ROSSO": 3, "GIALLO": 2, "VERDE": 1, "N/D": 0}
 
@@ -72,7 +88,7 @@ c_p = c1.multiselect("Cani Presenti", df_c['nome'].tolist() if not df_c.empty el
 v_p = c2.multiselect("Volontari Presenti", df_v['nome'].tolist() if not df_v.empty else [])
 # ... (tutto il codice precedente fino alla riga 79 rimane uguale)
 
-l_p = c3.multiselect("Campi (No Duca Auto)", [l for l in df_l['nome'].tolist() if l != "Duca Park"] if not df_l.empty else [])
+l_p = c3.multiselect("Campi", [l for l in df_l['nome'].tolist() if l != "Parco Duca"] if not df_l.empty else [])
 
 # --- CREAZIONE TABS (Correzione Errore) ---
 tab_programma, tab_anagrafica = st.tabs(["📅 Programma", "🐕 Anagrafica"])
