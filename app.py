@@ -46,18 +46,6 @@ def load_data(sheet_name):
 
 init_db()
 
-# --- DEFINIZIONE LARGHEZZE COLONNE (UNIFORMATE) ---
-# Usiamo questa configurazione sia per il programma che per l'anagrafica
-CONFIG_COLONNE = {
-    "nome": st.column_config.TextColumn("Cane", width="medium", help="Nome del cane"),
-    "cibo": st.column_config.TextColumn("Cibo", width="large"),
-    "note": st.column_config.TextColumn("Note", width="large"),
-    "attivita": st.column_config.TextColumn("Attività", width="large"),
-    "guinzaglieria": st.column_config.TextColumn("Guinzaglieria", width="medium"),
-    "strumenti": st.column_config.TextColumn("Strumenti", width="medium"),
-    "tempo": st.column_config.TextColumn("Tempo", width="small")
-}
-
 # --- NAVIGAZIONE ---
 menu = st.sidebar.radio("Navigazione", ["📅 Gestione Turno", "📋 Anagrafica Cani"])
 
@@ -83,6 +71,7 @@ if menu == "📅 Gestione Turno":
 
     df_c = load_data("Cani"); df_v = load_data("Volontari"); df_l = load_data("Luoghi")
 
+    # --- 1. CHECK-IN ---
     st.subheader("✅ 1. Check-in Disponibilità")
     c1, col2, col3 = st.columns(3)
     c_p = c1.multiselect("Cani", df_c['nome'].tolist() if 'nome' in df_c.columns else [], default=df_c['nome'].tolist())
@@ -90,6 +79,8 @@ if menu == "📅 Gestione Turno":
     l_p = col3.multiselect("Campi", df_l['nome'].tolist() if 'nome' in df_l.columns else [], default=df_l['nome'].tolist())
 
     st.divider()
+    
+    # --- 2. AGGIUNTA ATTIVITÀ ---
     if c_p and v_p and l_p:
         st.subheader("🔗 2. Nuova Attività")
         r1 = st.columns(3)
@@ -114,70 +105,75 @@ if menu == "📅 Gestione Turno":
         h_al = r2[1].time_input("Fine", (datetime.combine(data_t, h_dal) + timedelta(minutes=durata_min)).time())
 
         if st.button("➕ Aggiungi al Programma", use_container_width=True):
-            if 'programma' not in st.session_state: st.session_state.programma = []
-            st.session_state.programma.append({
+            nuova_att = {
                 "Orario": f"{h_dal.strftime('%H:%M')} - {h_al.strftime('%H:%M')}",
-                "Inizio": h_dal.strftime('%H:%M'),
                 "Cane": sel_c, "Volontario": sel_v, "Luogo": sel_l,
                 "Cibo": info['cibo'] if info else "-", "Note": info['note'] if info else "-",
                 "Attività": info['attivita'] if info else "-", "Strumenti": info['strumenti'] if info else "-",
-                "Guinzaglieria": info['guinzaglieria'] if info else "-"
-            })
+                "Guinzaglieria": info['guinzaglieria'] if info else "-",
+                "Inizio_Sort": h_dal.strftime('%H:%M')
+            }
+            if 'programma' not in st.session_state: st.session_state.programma = []
+            st.session_state.programma.append(nuova_att)
             st.rerun()
 
+    # --- 3. EDITOR PROGRAMMA ---
     if 'programma' in st.session_state and st.session_state.programma:
         st.divider()
-        df_prog = pd.DataFrame(st.session_state.programma).sort_values("Inizio")
-        df_view = df_prog.drop(columns=['Inizio'])
+        st.subheader("📝 3. Riepilogo e Modifica")
+        st.caption("Puoi modificare le celle, aggiungere righe o eliminarle selezionandole a sinistra.")
         
-        # Visualizzazione tabella con ritorno a capo
-        st.dataframe(df_view, use_container_width=True, hide_index=True)
+        # Trasforma in DataFrame per l'editor
+        df_editor = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
+        
+        # Interfaccia di modifica (Data Editor)
+        df_modificato = st.data_editor(
+            df_editor,
+            column_config={
+                "Inizio_Sort": None, # Nascondi colonna tecnica
+                "Note": st.column_config.TextColumn(width="large"),
+                "Cibo": st.column_config.TextColumn(width="large"),
+                "Attività": st.column_config.TextColumn(width="large"),
+            },
+            num_rows="dynamic", # Permette di eliminare righe con tasto CANC o selezione
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Sincronizza lo stato con le modifiche fatte nell'editor
+        st.session_state.programma = df_modificato.to_dict('records')
 
+        # --- AZIONI FINALI ---
         b1, b2, b3 = st.columns(3)
-        if b1.button("💾 Salva Storico", use_container_width=True):
+        if b1.button("💾 Salva Storico Database", use_container_width=True):
             conn = sqlite3.connect('canile.db')
             for r in st.session_state.programma:
-                conn.execute("INSERT INTO storico VALUES (?,?,?,?,?,?)", (str(data_t), r['Inizio'], "-", r['Cane'], r['Volontario'], r['Luogo']))
-            conn.commit(); conn.close(); st.success("Salvato!")
+                conn.execute("INSERT INTO storico VALUES (?,?,?,?,?,?)", (str(data_t), r.get('Inizio_Sort', '00:00'), "-", r['Cane'], r['Volontario'], r['Luogo']))
+            conn.commit(); conn.close(); st.success("Database Storico Aggiornato!")
         
         # EXPORT EXCEL
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_view.to_excel(writer, index=False, sheet_name='Turno')
+            df_modificato.drop(columns=['Inizio_Sort'], errors='ignore').to_excel(writer, index=False, sheet_name='Turno')
             workbook = writer.book
             worksheet = writer.sheets['Turno']
             cell_fmt = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1, 'font_size': 9})
-            for i, col in enumerate(df_view.columns):
+            for i, col in enumerate(df_modificato.drop(columns=['Inizio_Sort'], errors='ignore').columns):
                 width = 22 if col in ['Note', 'Attività', 'Cibo'] else 15
                 worksheet.set_column(i, i, width, cell_fmt)
 
-        b2.download_button("📊 Scarica Excel", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
+        b2.download_button("📊 Scarica Excel (Turno Corrente)", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
+        
         if b3.button("🗑️ Svuota Tutto", use_container_width=True): 
             st.session_state.programma = []
             st.rerun()
 
 elif menu == "📋 Anagrafica Cani":
     st.title("📋 Database Persistente")
-    st.write("Dati estratti dai PDF. Le colonne seguono le dimensioni del file Excel.")
-    
     conn = sqlite3.connect('canile.db')
     try:
         df_ana = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
-        
-        # --- TABELLA ANAGRAFICA CON STESSE DIMENSIONI ---
-        st.dataframe(
-            df_ana,
-            use_container_width=True,
-            column_config=CONFIG_COLONNE,
-            hide_index=True
-        )
-        
-        st.divider()
-        c_del = st.selectbox("Seleziona un cane da rimuovere", df_ana['nome'].tolist())
-        if st.button(f"🗑️ Elimina scheda di {c_del}"):
-            conn.execute("DELETE FROM anagrafica_cani WHERE nome=?", (c_del,))
-            conn.commit(); st.rerun()
-            
+        st.data_editor(df_ana, use_container_width=True, hide_index=True) # Anche l'anagrafica è modificabile al volo
     except:
-        st.info("Nessun dato presente. Carica i PDF nella pagina Programma.")
+        st.info("Nessun dato.")
     conn.close()
