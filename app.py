@@ -7,28 +7,23 @@ import sqlite3
 import io
 
 # --- CONFIGURAZIONE E STILI ---
-st.set_page_config(page_title="Canile Soft - Mobile Optimized", layout="wide")
+st.set_page_config(page_title="Canile Soft - Gestione Volontari", layout="wide")
 
-# Mappa conflitti spaziali (da memoria utente)
+# Mappa conflitti spaziali (Memoria Utente)
 CONFLITTI = {
     "Lago Park": "Central Park", "Central Park": "Lago Park",
     "Peter Park": "Duca Park", "Duca Park": "Peter Park"
 }
 
-COLOR_MAP = {"ROSSO": 3, "GIALLO": 2, "VERDE": 1, "N/D": 0}
-
 def init_db():
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
-    # Tabella storico per ricordare chi ha lavorato con chi
     c.execute('CREATE TABLE IF NOT EXISTS storico (data TEXT, inizio TEXT, cane TEXT, volontario TEXT, luogo TEXT)')
-    # Anagrafica cani
     c.execute('''CREATE TABLE IF NOT EXISTS anagrafica_cani 
                  (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, strumenti TEXT, attivita TEXT, note TEXT, tempo TEXT, livello TEXT)''')
     conn.commit(); conn.close()
 
 def load_gsheets(sheet_name):
-    # Caricamento robusto
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url); df.columns = [c.strip().lower() for c in df.columns]
@@ -61,7 +56,6 @@ with st.sidebar:
 
 df_c = load_gsheets("Cani"); df_v = load_gsheets("Volontari"); df_l = load_gsheets("Luoghi")
 
-# --- CORE LOGIC ---
 if 'programma' not in st.session_state: st.session_state.programma = []
 
 st.title("📱 Canile Soft - Gestione Adattiva")
@@ -70,16 +64,13 @@ st.title("📱 Canile Soft - Gestione Adattiva")
 c1, c2, c3 = st.columns(3)
 c_p = c1.multiselect("Cani Presenti", df_c['nome'].tolist() if not df_c.empty else [])
 v_p = c2.multiselect("Volontari Presenti", df_v['nome'].tolist() if not df_v.empty else [])
-# ... (tutto il codice precedente fino alla riga 79 rimane uguale)
+# Duca Park escluso di default come da istruzioni
+l_p = c3.multiselect("Campi Disponibili", [l for l in df_l['nome'].tolist() if l != "Duca Park"] if not df_l.empty else [])
 
-l_p = c3.multiselect("Campi (No Duca Auto)", [l for l in df_l['nome'].tolist() if l != "Duca Park"] if not df_l.empty else [])
-
-# --- CREAZIONE TABS (Correzione Errore) ---
 tab_programma, tab_anagrafica = st.tabs(["📅 Programma", "🐕 Anagrafica"])
 
-# --- TAB 1: GESTIONE PROGRAMMA ---
 with tab_programma:
-    # 1. INSERIMENTO MANUALE (PRIORITARIO)
+    # 1. INSERIMENTO MANUALE
     with st.expander("✍️ Inserimento Manuale (Priorità Alta)"):
         mc1, mc2, mc3, mc4 = st.columns(4)
         m_cane = mc1.selectbox("Cane", ["-"] + c_p)
@@ -89,7 +80,7 @@ with tab_programma:
         
         if st.button("➕ Aggiungi Riga Manuale"):
             if m_cane != "-":
-                durata_m = 30 # Default
+                durata_m = 30
                 st.session_state.programma.append({
                     "Orario": f"{m_ora.strftime('%H:%M')} - {(datetime.combine(data_t, m_ora)+timedelta(minutes=durata_m)).strftime('%H:%M')}",
                     "Cane": m_cane, "Volontario": m_vol, "Luogo": m_luo, "Attività": "Manuale", 
@@ -97,18 +88,16 @@ with tab_programma:
                 })
                 st.rerun()
 
-    # 2. LOGICA AUTOMATICA INTELLIGENTE
+    # 2. LOGICA AUTOMATICA (Tutti i volontari devono lavorare)
     c_btn1, c_btn2 = st.columns(2)
 
-    if c_btn1.button("🤖 Completa Programma (Tutti al lavoro + Pasti)", use_container_width=True):
+    if c_btn1.button("🤖 Completa Programma (Nessun Volontario Inattivo)", use_container_width=True):
         conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
         
-        # Setup Orari
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
-        pasti_dt = end_dt - timedelta(minutes=30) # Ricordo regola: Pasti ultimi 30 min
+        pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # 1. Briefing (Se non esiste, lo crea)
         if not any(r.get('Attività') == 'Briefing' for r in st.session_state.programma):
             st.session_state.programma.insert(0, {
                 "Orario": f"{start_dt.strftime('%H:%M')} - {(start_dt+timedelta(minutes=15)).strftime('%H:%M')}", 
@@ -116,59 +105,64 @@ with tab_programma:
                 "Inizio_Sort": start_dt.strftime('%H:%M'), "Tipo": "Auto"
             })
 
-        # 2. Analisi Stato Attuale
         prog_temp = [r for r in st.session_state.programma if r.get('Attività') not in ['Briefing', 'Pasti']]
         cani_fatti = [r['Cane'] for r in prog_temp]
         cani_da_fare = [c for c in c_p if c not in cani_fatti]
         
         curr_t = start_dt + timedelta(minutes=15)
         
-        # Ciclo di riempimento slot
         while cani_da_fare and curr_t < pasti_dt:
-            vols_slot = v_p.copy()
+            vols_disponibili = v_p.copy()
+            campi_occupati_ora = [r['Luogo'] for r in prog_temp if r.get('Inizio_Sort') == curr_t.strftime('%H:%M')]
             
-            # Filtra campi occupati manualmente
-            occupati_manuali = [r for r in prog_temp if r.get('Inizio_Sort') == curr_t.strftime('%H:%M')]
-            campi_occupati = [r['Luogo'] for r in occupati_manuali]
+            # Calcolo campi realmente liberi e non in conflitto
+            vietati = []
+            for occ in campi_occupati_ora:
+                if occ in CONFLITTI: vietati.append(CONFLITTI[occ])
             
-            # Gestione Conflitti (Lago vs Central, Peter vs Duca)
-            campi_vietati = []
-            for occ in campi_occupati:
-                if occ in CONFLITTI: campi_vietati.append(CONFLITTI[occ])
-                
-            campi_liberi = [l for l in l_p if l not in campi_occupati and l not in campi_vietati]
+            campi_liberi = [l for l in l_p if l not in campi_occupati_ora and l not in vietati]
             
-            # Assegnazione Cani
-            while cani_da_fare and campi_liberi and vols_slot:
-                cane = cani_da_fare.pop(0)
-                campo = campi_liberi.pop(0)
+            # Numero di cani che possiamo gestire in questo slot
+            n_cani_slot = min(len(cani_da_fare), len(campi_liberi))
+            
+            if n_cani_slot > 0:
+                batch_assegnazioni = []
                 
-                if campo in CONFLITTI and CONFLITTI[campo] in campi_liberi:
-                    campi_liberi.remove(CONFLITTI[campo])
-                
-                # SELEZIONE VOLONTARIO (Priorità Storico)
-                best_vol = None
-                vols_con_punteggio = []
-                for v in vols_slot:
-                    cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
-                    vols_con_punteggio.append((v, cnt))
-                
-                vols_con_punteggio.sort(key=lambda x: x[1], reverse=True)
-                
-                if vols_con_punteggio:
-                    v_main = vols_con_punteggio[0][0]
-                    vols_slot.remove(v_main)
-                    v_str = v_main
+                # Primo passaggio: Assegna un cane a un campo e trova il lead (storico)
+                for _ in range(n_cani_slot):
+                    cane = cani_da_fare.pop(0)
+                    campo = campi_liberi.pop(0)
+                    if campo in CONFLITTI and CONFLITTI[campo] in campi_liberi:
+                        campi_liberi.remove(CONFLITTI[campo])
                     
-                    if len(vols_slot) > len(cani_da_fare):
-                        sup = vols_slot.pop(0)
-                        v_str += f"\n+ {sup} (Sup.)"
+                    # Trova il miglior volontario per questo cane
+                    vols_con_punteggio = []
+                    for v in vols_disponibili:
+                        cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
+                        vols_con_punteggio.append((v, cnt))
+                    vols_con_punteggio.sort(key=lambda x: x[1], reverse=True)
                     
-                    info = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (cane.capitalize(),)).fetchone()
+                    lead = vols_con_punteggio[0][0]
+                    vols_disponibili.remove(lead)
+                    batch_assegnazioni.append({"cane": cane, "campo": campo, "lead": lead, "supporti": []})
+
+                # Secondo passaggio: Distribuisci TUTTI i volontari rimasti tra i cani usciti
+                idx = 0
+                while vols_disponibili:
+                    batch_assegnazioni[idx % len(batch_assegnazioni)]["supporti"].append(vols_disponibili.pop(0))
+                    idx += 1
+                
+                # Creazione record definitivi
+                for ass in batch_assegnazioni:
+                    vol_str = ass["lead"]
+                    if ass["supporti"]:
+                        vol_str += "\n+ " + "\n+ ".join(ass["supporti"]) + " (Sup.)"
+                    
+                    info = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (ass["cane"].capitalize(),)).fetchone()
                     
                     st.session_state.programma.append({
                         "Orario": f"{curr_t.strftime('%H:%M')} - {(curr_t+timedelta(minutes=30)).strftime('%H:%M')}",
-                        "Cane": cane, "Volontario": v_str, "Luogo": campo,
+                        "Cane": ass["cane"], "Volontario": vol_str, "Luogo": ass["campo"],
                         "Cibo": info['cibo'] if info else "-", "Note": info['note'] if info else "-",
                         "Attività": info['attivita'] if info else "Uscita",
                         "Inizio_Sort": curr_t.strftime('%H:%M'), "Tipo": "Auto"
@@ -190,76 +184,33 @@ with tab_programma:
         st.session_state.programma = []
         st.rerun()
 
-    # --- EDITOR E MODIFICA ---
+    # --- EDITOR VISIVO ---
     if st.session_state.programma:
         st.divider()
-        st.subheader("📝 Programma (Modificabile)")
-        
-        df_prog = pd.DataFrame(st.session_state.programma)
-        if not df_prog.empty and "Inizio_Sort" in df_prog.columns:
-            df_prog = df_prog.sort_values("Inizio_Sort")
-        
-        col_config = {
-            "Inizio_Sort": None, "Tipo": None,
-            "Orario": st.column_config.TextColumn("Ora", width="small"),
-            "Cane": st.column_config.TextColumn("Cane", width="small"),
-            "Volontario": st.column_config.TextColumn("Volontario", width="medium"),
-            "Luogo": st.column_config.TextColumn("Luogo", width="small"),
-            "Attività": st.column_config.TextColumn("Attività", width="small"),
-            "Cibo": st.column_config.TextColumn("Cibo", width="small"),
-            "Note": st.column_config.TextColumn("Note", width="medium"),
-        }
+        df_prog = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
         
         df_edited = st.data_editor(
             df_prog,
-            column_config=col_config,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="dynamic",
-            height=800
+            column_config={
+                "Inizio_Sort": None, "Tipo": None,
+                "Orario": st.column_config.TextColumn("Ora", width="small"),
+                "Volontario": st.column_config.TextColumn("Volontari (Lead + Sup)", width="medium"),
+                "Note": st.column_config.TextColumn("Note", width="large"),
+            },
+            use_container_width=True, hide_index=True, num_rows="dynamic"
         )
-        
         st.session_state.programma = df_edited.to_dict('records')
 
+        # Export Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_to_save = df_edited.drop(columns=['Inizio_Sort', 'Tipo'], errors='ignore')
-            df_to_save.to_excel(writer, index=False)
-            workbook = writer.book
-            worksheet = writer.sheets['Sheet1']
-            fmt_wrap = workbook.add_format({'text_wrap': True, 'valign': 'top', 'border': 1})
-            worksheet.set_column('A:A', 12, fmt_wrap)
-            worksheet.set_column('B:C', 15, fmt_wrap)
-            worksheet.set_column('D:D', 12, fmt_wrap)
-            worksheet.set_column('E:H', 20, fmt_wrap)
-            
-        st.download_button("📊 Scarica Excel", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
-        
-        if st.button("💾 Salva nel Database Storico (A fine turno)"):
-            conn = sqlite3.connect('canile.db')
-            for r in st.session_state.programma:
-                if r['Cane'] not in ["TUTTI", "-"]:
-                    v_clean = r['Volontario'].split('\n')[0].strip()
-                    conn.execute("INSERT INTO storico (data, inizio, cane, volontario, luogo) VALUES (?,?,?,?,?)", 
-                                 (str(data_t), r['Orario'][:5], r['Cane'], v_clean, r['Luogo']))
-            conn.commit(); conn.close()
-            st.success("Storico salvato!")
+            df_edited.drop(columns=['Inizio_Sort', 'Tipo'], errors='ignore').to_excel(writer, index=False)
+        st.download_button("📊 Scarica Turno Excel", output.getvalue(), f"turno_{data_t}.xlsx", use_container_width=True)
 
-# --- TAB 2: VISUALIZZAZIONE ANAGRAFICA ---
-with tab_anagrafica: # <--- QUI HO CORRETTO menu[1] con tab_anagrafica
-    st.subheader("📋 Anagrafica Cani")
+with tab_anagrafica:
+    st.subheader("📋 Database Cani")
     conn = sqlite3.connect('canile.db')
     df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
     conn.close()
-    
     if not df_db.empty:
-        st.dataframe(
-            df_db, 
-            use_container_width=True, 
-            column_config={
-                "nome": st.column_config.TextColumn("Nome", width="small"),
-                "cibo": st.column_config.TextColumn("Cibo", width="medium"),
-                "note": st.column_config.TextColumn("Note", width="medium"),
-                "livello": st.column_config.TextColumn("Lvl", width="small"),
-            }
-        )
+        st.dataframe(df_db, use_container_width=True)
