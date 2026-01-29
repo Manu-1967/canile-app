@@ -6,6 +6,30 @@ import re
 import sqlite3
 import io
 
+"""
+CANILE SOFT v3 - UPDATED
+========================
+NUOVA FUNZIONALITÀ: Controllo Reattività Cani
+
+MODIFICHE IMPLEMENTATE:
+1. Caricamento automatico del campo "reattività" dal foglio Google "Cani"
+2. Caricamento automatico della colonna "adiacente" dal foglio Google "Luoghi"
+3. Controllo automatico: i cani con reattività > 5 NON vengono assegnati a campi 
+   adiacenti se già occupati nello stesso orario
+4. Controllo manuale: avviso all'utente se tenta di inserire un cane reattivo 
+   in un campo adiacente occupato
+
+CONFIGURAZIONE FOGLIO GOOGLE "Luoghi":
+- Aggiungi una colonna "adiacente" 
+- Per ogni campo, indica i campi adiacenti separati da virgola
+- Esempio: se Campo1 è vicino a Campo2 e Campo3, scrivi "Campo2, Campo3"
+
+CONFIGURAZIONE FOGLIO GOOGLE "Cani":
+- Aggiungi una colonna "reattività" con valori numerici da 0 a 10
+- I cani con reattività <= 5 non hanno restrizioni
+- I cani con reattività > 5 richiedono isolamento dai campi adiacenti
+"""
+
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Canile Soft v3", layout="centered")
 
@@ -30,6 +54,17 @@ def load_gsheets(sheet_name):
         if sheet_name == "Luoghi" and 'automatico' not in df.columns:
             # Se la colonna non esiste nel foglio, assumiamo 'sì' per tutto per non rompere il codice
             df['automatico'] = 'sì'
+        
+        # ### MODIFICA: Gestione colonna 'adiacente' per i Luoghi
+        if sheet_name == "Luoghi" and 'adiacente' not in df.columns:
+            df['adiacente'] = ''
+        
+        # ### MODIFICA: Gestione colonna 'reattività' per i Cani
+        if sheet_name == "Cani" and 'reattività' not in df.columns:
+            df['reattività'] = 0
+        elif sheet_name == "Cani":
+            # Converto a numerico, mettendo 0 dove non valido
+            df['reattività'] = pd.to_numeric(df['reattività'], errors='coerce').fillna(0)
             
         return df.dropna(how='all')
     except:
@@ -44,6 +79,55 @@ def parse_pdf_content(text):
         if match:
             dati_estratti[campo] = match.group(1).strip()
     return dati_estratti
+
+def get_reattivita_cane(nome_cane, df_cani):
+    """Restituisce il valore di reattività di un cane dal DataFrame"""
+    if df_cani.empty or 'reattività' not in df_cani.columns:
+        return 0
+    riga = df_cani[df_cani['nome'] == nome_cane]
+    if not riga.empty:
+        return float(riga.iloc[0]['reattività'])
+    return 0
+
+def get_campi_adiacenti(campo, df_luoghi):
+    """
+    Restituisce la lista dei campi adiacenti a un dato campo leggendo dal DataFrame Luoghi.
+    La colonna 'adiacente' può contenere nomi separati da virgola, es: "Campo1, Campo2"
+    """
+    if df_luoghi.empty or 'adiacente' not in df_luoghi.columns:
+        return []
+    
+    riga = df_luoghi[df_luoghi['nome'] == campo]
+    if not riga.empty:
+        adiacenti_str = str(riga.iloc[0]['adiacente']).strip()
+        if adiacenti_str and adiacenti_str != 'nan':
+            # Separo per virgola e pulisco gli spazi
+            return [c.strip() for c in adiacenti_str.split(',') if c.strip()]
+    return []
+
+def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_cani, df_luoghi):
+    """
+    Verifica se un campo è valido per un cane con reattività > 5.
+    Restituisce True se il campo è OK, False se ci sono conflitti.
+    """
+    reattivita = get_reattivita_cane(cane, df_cani)
+    
+    # Se reattività <= 5, nessun problema
+    if reattivita <= 5:
+        return True
+    
+    # Se reattività > 5, controllo campi adiacenti (dal foglio Google)
+    campi_adiacenti = get_campi_adiacenti(campo, df_luoghi)
+    
+    # Verifico se nei campi adiacenti c'è già un cane allo stesso orario
+    for turno in turni_attuali:
+        if turno["Orario"] == ora_attuale_str:
+            if turno["Luogo"] in campi_adiacenti:
+                # C'è un altro cane in un campo adiacente nello stesso orario
+                return False
+    
+    return True
+
 
 init_db()
 
@@ -93,7 +177,7 @@ with tab_prog:
         if st.button("➕ Aggiungi Manualmente"):
             if m_cane != "-":
                 ora_str = m_ora.strftime('%H:%M')
-                # CONTROLLO: Il volontario è già impegnato?
+                # CONTROLLO 1: Il volontario è già impegnato?
                 conflitti = []
                 for turno in st.session_state.programma:
                     if turno["Orario"] == ora_str:
@@ -102,8 +186,17 @@ with tab_prog:
                             if v_scelto in vols_occupati:
                                 conflitti.append(v_scelto)
                 
+                # CONTROLLO 2: Reattività cane in campo adiacente
+                reattivita_cane = get_reattivita_cane(m_cane, df_c)
+                conflitto_reattivita = False
+                if reattivita_cane > 5 and m_luo != "-":
+                    if not campo_valido_per_reattivita(m_cane, m_luo, st.session_state.programma, ora_str, df_c, df_l):
+                        conflitto_reattivita = True
+                
                 if conflitti:
                     st.error(f"Attenzione! I seguenti volontari sono già occupati alle {ora_str}: {', '.join(conflitti)}")
+                elif conflitto_reattivita:
+                    st.error(f"⚠️ ATTENZIONE! {m_cane} ha reattività > 5 ({reattivita_cane:.0f}) e ci sono già cani in campi adiacenti a {m_luo} alle {ora_str}. Scegli un altro campo o orario.")
                 else:
                     st.session_state.programma.append({
                         "Orario": ora_str,
@@ -171,8 +264,35 @@ with tab_prog:
                 for _ in range(n_cani):
                     if not cani_da_fare or not vols_liberi: break
                     
-                    cane = cani_da_fare.pop(0)
-                    campo = campi_disponibili.pop(0)
+                    # Provo ad assegnare un cane a un campo valido
+                    cane_assegnato = False
+                    tentativi = 0
+                    
+                    while not cane_assegnato and tentativi < len(cani_da_fare):
+                        cane = cani_da_fare[tentativi]
+                        
+                        # Cerco un campo disponibile che rispetti la reattività
+                        campo_trovato = None
+                        for campo in campi_disponibili:
+                            # Verifico tutti i turni già schedulati (automatici + manuali)
+                            tutti_turni = st.session_state.programma + manuali_esistenti
+                            if campo_valido_per_reattivita(cane, campo, tutti_turni, ora_attuale_str, df_c, df_l):
+                                campo_trovato = campo
+                                break
+                        
+                        if campo_trovato:
+                            # Assegnazione riuscita
+                            cane = cani_da_fare.pop(tentativi)
+                            campo = campo_trovato
+                            campi_disponibili.remove(campo)
+                            cane_assegnato = True
+                        else:
+                            # Questo cane non può essere assegnato ora, provo il prossimo
+                            tentativi += 1
+                    
+                    if not cane_assegnato:
+                        # Nessun cane può essere assegnato in questa fascia oraria
+                        break
                     
                     # Scelta lead (priorità storica)
                     vols_punteggio = []
