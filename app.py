@@ -119,100 +119,119 @@ with tab_prog:
     # 2. GENERAZIONE AUTOMATICA (Logica di esclusione potenziata)
     c_btn1, c_btn2 = st.columns(2)
     
-    if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
-        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
+    iif c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
+        conn = sqlite3.connect('canile.db')
+        conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # 1. RECUPERO MANUALI
+        # 1. Recupero i turni inseriti manualmente per non perderli
         manuali_esistenti = [r for r in st.session_state.programma if r.get("Attività") == "Manuale"]
         st.session_state.programma = []
         
-        # Briefing
+        # Aggiungiamo il Briefing iniziale
         st.session_state.programma.append({
             "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
         })
 
-        cani_gia_occupati = [m["Cane"] for m in manuali_esistenti]
-        cani_da_fare = [c for c in c_p if c not in cani_gia_occupati]
-        curr_t = start_dt + timedelta(minutes=15)
+        # Identifichiamo quali cani sono già stati assegnati manualmente
+        cani_gia_fatti_manualmente = [m["Cane"] for m in manuali_esistenti]
+        cani_da_fare = [c for c in c_p if c not in cani_gia_fatti_manualmente]
         
-        # Filtro Luoghi
-        luoghi_auto_ok = []
+        # Filtro Luoghi Automatici
         if not df_l.empty and 'automatico' in df_l.columns:
              filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
              luoghi_auto_ok = df_l[filtro]['nome'].tolist()
         else:
              luoghi_auto_ok = l_p.copy()
 
-        # ALGORITMO
+        curr_t = start_dt + timedelta(minutes=15)
+        
+        # ALGORITMO DI COMPLETAMENTO
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             ora_attuale_str = curr_t.strftime('%H:%M')
             
-            # --- FILTRO ANTI-SOVRAPPOSIZIONE ---
-            vols_impegnati_ora = []
-            luoghi_impegnati_ora = []
+            # Controllo chi e cosa è occupato dai manuali in questo esatto orario
+            vols_occupati_manuale = []
+            luoghi_occupati_manuale = []
             for m in manuali_esistenti:
                 if m["Orario"] == ora_attuale_str:
-                    # Estraiamo tutti i nomi separati dalla virgola (es: "Mario, Anna")
-                    vols_impegnati_ora.extend([v.strip() for v in m["Volontario"].split(",")])
-                    luoghi_impegnati_ora.append(m["Luogo"])
+                    vols_occupati_manuale.extend([v.strip() for v in str(m["Volontario"]).split(",")])
+                    luoghi_occupati_manuale.append(m["Luogo"])
 
-            # I volontari liberi sono quelli presenti OGGI meno quelli già impegnati nei manuali ORA
-            vols_liberi = [v for v in v_p if v not in vols_impegnati_ora]
-            campi_disponibili = [l for l in luoghi_auto_ok if l not in luoghi_impegnati_ora]
+            # Risorse realmente disponibili per l'automatico
+            vols_liberi = [v for v in v_p if v not in vols_occupati_manuale]
+            campi_disponibili = [l for l in luoghi_auto_ok if l not in luoghi_occupati_manuale]
             
-            n_cani = min(len(cani_da_fare), len(campi_disponibili))
+            # Quanti cani possiamo far uscire in questo turno?
+            n_cani_possibili = min(len(cani_da_fare), len(campi_disponibili))
             
-            if n_cani > 0 and vols_liberi:
-                batch = []
-                for _ in range(n_cani):
+            if n_cani_possibili > 0 and vols_liberi:
+                batch_del_turno = []
+                
+                # Assegnazione Lead (Conduttore principale)
+                for _ in range(n_cani_possibles):
                     if not cani_da_fare or not vols_liberi: break
                     
                     cane = cani_da_fare.pop(0)
                     campo = campi_disponibili.pop(0)
                     
-                    # Scelta lead (priorità storica)
+                    # Cerca il volontario più esperto per questo cane (frequenza storica)
                     vols_punteggio = []
                     for v in vols_liberi:
                         cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
                         vols_punteggio.append((v, cnt))
-                    vols_punteggio.sort(key=lambda x: x[1], reverse=True)
                     
+                    # Ordina per chi ha più esperienza (frequenza alta)
+                    vols_punteggio.sort(key=lambda x: x[1], reverse=True)
                     lead = vols_punteggio[0][0]
-                    vols_liberi.remove(lead) # Togliamo subito il volontario per non usarlo nello stesso batch
-                    batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
+                    
+                    vols_liberi.remove(lead)
+                    batch_del_turno.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
 
-                # Assegnazione supporti (se avanzano volontari liberi in questa fascia oraria)
-                if vols_liberi and batch:
+                # Distribuzione dei Volontari Rimasti come SUPPORTO
+                # Questo garantisce che tutti i volontari lavorino
+                if vols_liberi and batch_del_turno:
                     idx = 0
                     while vols_liberi:
-                        batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
+                        vol_sup = vols_liberi.pop(0)
+                        batch_del_turno[idx % len(batch_del_turno)]["sups"].append(vol_sup)
                         idx += 1
                 
-                for b in batch:
-                    v_str = b["lead"] + (f" + {', '.join(b['sups'])}" if b["sups"] else "")
-                    info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (b["cane"].capitalize(),)).fetchone()
+                # Registrazione nel programma
+                for b in batch_del_turno:
+                    v_completo = b["lead"]
+                    if b["sups"]:
+                        v_completo += " + " + ", ".join(b["sups"])
+                    
+                    info_cane = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (b["cane"].capitalize(),)).fetchone()
+                    
                     st.session_state.programma.append({
-                        "Orario": ora_attuale_str, "Cane": b["cane"], "Volontario": v_str, 
-                        "Luogo": b["campo"], "Note": info['note'] if info else "-", 
-                        "Inizio_Sort": ora_attuale_str, "Attività": "Automatico"
+                        "Orario": ora_attuale_str, 
+                        "Cane": b["cane"], 
+                        "Volontario": v_completo, 
+                        "Luogo": b["campo"], 
+                        "Note": info_cane['note'] if info_cane else "-", 
+                        "Inizio_Sort": ora_attuale_str, 
+                        "Attività": "Automatico"
                     })
             
+            # Avanza di 45 minuti per il prossimo slot
             curr_t += timedelta(minutes=45)
 
-        # REINSERIMENTO E CHIUSURA
+        # 4. Uniamo i manuali salvati all'inizio
         st.session_state.programma.extend(manuali_esistenti)
+        
+        # Aggiungiamo i pasti alla fine
         st.session_state.programma.append({
             "Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
         })
-        conn.close(); st.rerun()
-
-    if c_btn2.button("🗑️ Svuota", use_container_width=True):
-        st.session_state.programma = []; st.rerun()
+        
+        conn.close()
+        st.rerun()
 
     # EDITOR FINALE
     if st.session_state.programma:
