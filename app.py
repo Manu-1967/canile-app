@@ -7,7 +7,7 @@ import sqlite3
 import io
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Canile Soft v3", layout="centered")
+st.set_page_config(page_title="Canile Soft v3.1 - Safety Edition", layout="centered")
 
 def init_db():
     conn = sqlite3.connect('canile.db')
@@ -20,16 +20,14 @@ def init_db():
     conn.close()
 
 def load_gsheets(sheet_name):
-    # Link al tuo Google Sheet (assicurati che sia pubblico o accessibile)
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
         df.columns = [c.strip().lower() for c in df.columns]
         
-        # ### MODIFICA: Gestione sicurezza colonna 'automatico' per i Luoghi
-        if sheet_name == "Luoghi" and 'automatico' not in df.columns:
-            # Se la colonna non esiste nel foglio, assumiamo 'sì' per tutto per non rompere il codice
-            df['automatico'] = 'sì'
+        if sheet_name == "Luoghi":
+            if 'automatico' not in df.columns: df['automatico'] = 'sì'
+            if 'adiacenza' not in df.columns: df['adiacenza'] = ""
             
         return df.dropna(how='all')
     except:
@@ -44,6 +42,37 @@ def parse_pdf_content(text):
         if match:
             dati_estratti[campo] = match.group(1).strip()
     return dati_estratti
+
+# --- FUNZIONE DI SICUREZZA ADIACENZE ---
+def is_safe_placement(cane_nome, luogo_nome, occupazioni_attuali, df_cani, df_luoghi):
+    """Verifica se il cane può stare nel luogo senza conflitti con i vicini."""
+    # 1. Recupera reattività del cane dal DataFrame Google Sheets
+    info_cane = df_cani[df_cani['nome'].str.lower() == cane_nome.lower()]
+    reattivita = 0
+    if not info_cane.empty:
+        reattivita = pd.to_numeric(info_cane.iloc[0].get('reattività', 0), errors='coerce')
+    
+    # Se il cane non è reattivo (>5), è sempre sicuro
+    if reattivita <= 5:
+        return True
+
+    # 2. Se è reattivo, cerchiamo i luoghi adiacenti
+    info_luogo = df_luoghi[df_luoghi['nome'].str.lower() == luogo_nome.lower()]
+    if info_luogo.empty:
+        return True
+    
+    adiacenti_str = str(info_luogo.iloc[0].get('adiacenza', ""))
+    if not adiacenti_str or adiacenti_str.lower() == "nan":
+        return True 
+
+    lista_adiacenti = [l.strip().lower() for l in adiacenti_str.split(',')]
+
+    # 3. Controlla se nei luoghi adiacenti c'è già un cane (qualsiasi cane)
+    for occ in occupazioni_attuali:
+        if str(occ['Luogo']).lower() in lista_adiacenti:
+            return False 
+            
+    return True
 
 init_db()
 
@@ -72,7 +101,7 @@ with st.sidebar:
 df_c = load_gsheets("Cani"); df_v = load_gsheets("Volontari"); df_l = load_gsheets("Luoghi")
 if 'programma' not in st.session_state: st.session_state.programma = []
 
-st.title("📱 Canile Soft")
+st.title("📱 Canile Soft v3.1")
 
 # --- SELEZIONE RISORSE ---
 c_p = st.multiselect("🐕 Cani in turno", df_c['nome'].tolist() if not df_c.empty else [])
@@ -82,7 +111,7 @@ l_p = st.multiselect("📍 Luoghi disponibili (Aperti oggi)", df_l['nome'].tolis
 tab_prog, tab_ana = st.tabs(["📅 Programma", "📋 Anagrafica"])
 
 with tab_prog:
-    # 1. INSERIMENTO MANUALE (Con controllo sovrapposizioni)
+    # 1. INSERIMENTO MANUALE
     with st.expander("✍️ Inserimento Libero (Manuale)"):
         col1, col2 = st.columns(2)
         m_cane = col1.selectbox("Cane", ["-"] + c_p)
@@ -93,7 +122,6 @@ with tab_prog:
         if st.button("➕ Aggiungi Manualmente"):
             if m_cane != "-":
                 ora_str = m_ora.strftime('%H:%M')
-                # CONTROLLO: Il volontario è già impegnato?
                 conflitti = []
                 for turno in st.session_state.programma:
                     if turno["Orario"] == ora_str:
@@ -106,17 +134,14 @@ with tab_prog:
                     st.error(f"Attenzione! I seguenti volontari sono già occupati alle {ora_str}: {', '.join(conflitti)}")
                 else:
                     st.session_state.programma.append({
-                        "Orario": ora_str,
-                        "Cane": m_cane, 
+                        "Orario": ora_str, "Cane": m_cane, 
                         "Volontario": ", ".join(m_vols) if m_vols else "Da assegnare", 
-                        "Luogo": m_luo, 
-                        "Attività": "Manuale", 
-                        "Inizio_Sort": ora_str
+                        "Luogo": m_luo, "Attività": "Manuale", "Inizio_Sort": ora_str
                     })
                     st.success(f"Turno delle {ora_str} aggiunto!")
                     st.rerun()
 
-    # 2. GENERAZIONE AUTOMATICA (Logica di esclusione potenziata)
+    # 2. GENERAZIONE AUTOMATICA CON LOGICA DI SICUREZZA
     c_btn1, c_btn2 = st.columns(2)
     
     if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
@@ -125,11 +150,9 @@ with tab_prog:
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # 1. RECUPERO MANUALI
         manuali_esistenti = [r for r in st.session_state.programma if r.get("Attività") == "Manuale"]
         st.session_state.programma = []
         
-        # Briefing
         st.session_state.programma.append({
             "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
@@ -139,7 +162,6 @@ with tab_prog:
         cani_da_fare = [c for c in c_p if c not in cani_gia_occupati]
         curr_t = start_dt + timedelta(minutes=15)
         
-        # Filtro Luoghi
         luoghi_auto_ok = []
         if not df_l.empty and 'automatico' in df_l.columns:
              filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
@@ -147,34 +169,41 @@ with tab_prog:
         else:
              luoghi_auto_ok = l_p.copy()
 
-        # ALGORITMO
+        # --- ALGORITMO DI ASSEGNAZIONE ---
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             ora_attuale_str = curr_t.strftime('%H:%M')
             
-            # --- FILTRO ANTI-SOVRAPPOSIZIONE ---
             vols_impegnati_ora = []
-            luoghi_impegnati_ora = []
+            occupazioni_ora = []
             for m in manuali_esistenti:
                 if m["Orario"] == ora_attuale_str:
-                    # Estraiamo tutti i nomi separati dalla virgola (es: "Mario, Anna")
-                    vols_impegnati_ora.extend([v.strip() for v in m["Volontario"].split(",")])
-                    luoghi_impegnati_ora.append(m["Luogo"])
+                    vols_impegnati_ora.extend([v.strip() for v in str(m["Volontario"]).split(",")])
+                    occupazioni_ora.append({"Cane": m["Cane"], "Luogo": m["Luogo"]})
 
-            # I volontari liberi sono quelli presenti OGGI meno quelli già impegnati nei manuali ORA
             vols_liberi = [v for v in v_p if v not in vols_impegnati_ora]
-            campi_disponibili = [l for l in luoghi_auto_ok if l not in luoghi_impegnati_ora]
+            campi_disponibili = [l for l in luoghi_auto_ok if l not in [o["Luogo"] for o in occupazioni_ora]]
             
-            n_cani = min(len(cani_da_fare), len(campi_disponibili))
+            batch_inseriti = []
             
-            if n_cani > 0 and vols_liberi:
-                batch = []
-                for _ in range(n_cani):
-                    if not cani_da_fare or not vols_liberi: break
+            # Tentativo di inserimento per ogni cane rimasto
+            for i in range(len(cani_da_fare)):
+                if not vols_liberi or not campi_disponibili:
+                    break
+                
+                cane = cani_da_fare[i]
+                campo_scelto = None
+                
+                # Cerca il primo campo sicuro per questo cane
+                for campo in campi_disponibili:
+                    if is_safe_placement(cane, campo, occupazioni_ora, df_c, df_l):
+                        campo_scelto = campo
+                        break
+                
+                if campo_scelto:
+                    cani_da_fare.pop(i)
+                    campi_disponibili.remove(campo_scelto)
                     
-                    cane = cani_da_fare.pop(0)
-                    campo = campi_disponibili.pop(0)
-                    
-                    # Scelta lead (priorità storica)
+                    # Punteggio volontario
                     vols_punteggio = []
                     for v in vols_liberi:
                         cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
@@ -182,28 +211,36 @@ with tab_prog:
                     vols_punteggio.sort(key=lambda x: x[1], reverse=True)
                     
                     lead = vols_punteggio[0][0]
-                    vols_liberi.remove(lead) # Togliamo subito il volontario per non usarlo nello stesso batch
-                    batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
+                    vols_liberi.remove(lead)
+                    
+                    info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (cane.capitalize(),)).fetchone()
+                    
+                    assegnazione = {
+                        "Orario": ora_attuale_str, "Cane": cane, "Volontario": lead, 
+                        "Luogo": campo_scelto, "Note": info['note'] if info else "-", 
+                        "Inizio_Sort": ora_attuale_str, "Attività": "Automatico",
+                        "sups": [] # Temporaneo per i supporti
+                    }
+                    batch_inseriti.append(assegnazione)
+                    occupazioni_ora.append({"Cane": cane, "Luogo": campo_scelto})
+                    break # Forza ricalcolo indice dopo pop
 
-                # Assegnazione supporti (se avanzano volontari liberi in questa fascia oraria)
-                if vols_liberi and batch:
-                    idx = 0
-                    while vols_liberi:
-                        batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
-                        idx += 1
-                
-                for b in batch:
-                    v_str = b["lead"] + (f" + {', '.join(b['sups'])}" if b["sups"] else "")
-                    info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (b["cane"].capitalize(),)).fetchone()
-                    st.session_state.programma.append({
-                        "Orario": ora_attuale_str, "Cane": b["cane"], "Volontario": v_str, 
-                        "Luogo": b["campo"], "Note": info['note'] if info else "-", 
-                        "Inizio_Sort": ora_attuale_str, "Attività": "Automatico"
-                    })
+            # Distribuzione volontari extra come supporti
+            if vols_liberi and batch_inseriti:
+                idx = 0
+                while vols_liberi:
+                    batch_inseriti[idx % len(batch_inseriti)]["sups"].append(vols_liberi.pop(0))
+                    idx += 1
+            
+            # Finalizzazione stringa volontari e aggiunta a session_state
+            for b in batch_inseriti:
+                if b["sups"]:
+                    b["Volontario"] += f" + {', '.join(b['sups'])}"
+                del b["sups"]
+                st.session_state.programma.append(b)
             
             curr_t += timedelta(minutes=45)
 
-        # REINSERIMENTO E CHIUSURA
         st.session_state.programma.extend(manuali_esistenti)
         st.session_state.programma.append({
             "Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
@@ -214,7 +251,6 @@ with tab_prog:
     if c_btn2.button("🗑️ Svuota", use_container_width=True):
         st.session_state.programma = []; st.rerun()
 
-    # EDITOR FINALE
     if st.session_state.programma:
         df_view = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
         df_edited = st.data_editor(df_view, use_container_width=True, hide_index=True, num_rows="dynamic")
