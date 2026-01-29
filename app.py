@@ -119,7 +119,7 @@ with tab_prog:
     # 2. GENERAZIONE AUTOMATICA (Logica di esclusione potenziata)
     c_btn1, c_btn2 = st.columns(2)
     
-    iif c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
+    if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
         conn = sqlite3.connect('canile.db')
         conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
