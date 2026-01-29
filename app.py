@@ -112,28 +112,27 @@ with tab_prog:
         pasti_dt = end_dt - timedelta(minutes=30) 
         
         # 1. RECUPERO I TURNI MANUALI ESISTENTI
-        # Usiamo .get() per sicurezza se la colonna Attività non esiste in tutti i record
         manuali_esistenti = [
             r for r in st.session_state.programma 
             if r.get("Attività") == "Manuale"
         ]
         
-        # 2. RESET DEL PROGRAMMA (Ma teniamo i manuali pronti per il reinserimento)
+        # 2. RESET DEL PROGRAMMA
         st.session_state.programma = []
         
-        # Inseriamo il Briefing iniziale
+        # Briefing iniziale
         st.session_state.programma.append({
             "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
         })
 
-        # 3. IDENTIFICAZIONE CANI GIÀ ASSEGNATI MANUALMENTE
+        # 3. IDENTIFICAZIONE CANI GIÀ ASSEGNATI
         cani_gia_occupati = [m["Cane"] for m in manuali_esistenti]
         cani_da_fare = [c for c in c_p if c not in cani_gia_occupati]
         
         curr_t = start_dt + timedelta(minutes=15)
         
-        # Logica Filtro Luoghi Automatici
+        # Filtro Luoghi
         luoghi_auto_ok = []
         if not df_l.empty and 'automatico' in df_l.columns:
              filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
@@ -141,12 +140,12 @@ with tab_prog:
         else:
              luoghi_auto_ok = l_p.copy()
 
-        # 4. ALGORITMO DI ASSEGNAZIONE (Protegge i manuali)
-        while cani_da_fare and curr_t <asti_dt and luoghi_auto_ok:
-            # Controlliamo se in questo orario c'è un impegno manuale
+        # 4. ALGORITMO (Con protezione risorse)
+        # CORRETTO: pasti_dt con la "p"
+        while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             ora_attuale_str = curr_t.strftime('%H:%M')
             
-            # Togliamo i volontari e i luoghi già impegnati in inserimenti manuali per questa ora
+            # Escludiamo risorse già usate nei manuali in questo specifico orario
             vols_impegnati_manuale = []
             luoghi_impegnati_manuale = []
             for m in manuali_esistenti:
@@ -167,7 +166,6 @@ with tab_prog:
                     cane = cani_da_fare.pop(0)
                     campo = campi_disponibili.pop(0)
                     
-                    # Logica priorità basata sullo storico
                     vols_punteggio = []
                     for v in vols_liberi:
                         cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
@@ -178,7 +176,6 @@ with tab_prog:
                     vols_liberi.remove(lead)
                     batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
 
-                # Supporti
                 if vols_liberi and batch:
                     idx = 0
                     while vols_liberi:
@@ -191,22 +188,18 @@ with tab_prog:
                     st.session_state.programma.append({
                         "Orario": ora_attuale_str, "Cane": b["cane"], "Volontario": v_str, 
                         "Luogo": b["campo"], "Note": info['note'] if info else "-", 
-                        "Inizio_Sort": ora_attuale_str,
-                        "Attività": "Automatico" # Distinguiamo per sicurezza
+                        "Inizio_Sort": ora_attuale_str, "Attività": "Automatico"
                     })
             
             curr_t += timedelta(minutes=45)
 
-        # 5. REINSERIMENTO MANUALI E PASTI
+        # 5. REINSERIMENTO E CHIUSURA
         st.session_state.programma.extend(manuali_esistenti)
-        
         st.session_state.programma.append({
             "Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
         })
-        
-        conn.close()
-        st.rerun()
+        conn.close(); st.rerun()
 
     if c_btn2.button("🗑️ Svuota", use_container_width=True):
         st.session_state.programma = []; st.rerun()
