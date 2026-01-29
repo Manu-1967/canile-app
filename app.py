@@ -14,12 +14,20 @@ FUNZIONALITÀ: Controllo Reattività Cani con Google Sheets
 CARATTERISTICHE:
 1. Caricamento automatico del campo "reattività" dal foglio Google "Cani"
 2. Caricamento automatico della colonna "adiacente" dal foglio Google "Luoghi"
-3. Controllo COMPLETO in:
+3. Controllo BIDIREZIONALE della reattività in:
    - Inserimento Manuale (con avviso all'utente)
    - Generazione Automatica (esclude automaticamente assegnazioni non valide)
    - Completamento Automatico (rispetta vincoli di reattività)
-4. Cani con reattività > 5 NON possono essere assegnati a campi adiacenti 
-   se già occupati nello stesso orario
+
+REGOLA DI REATTIVITÀ (CONTROLLO BIDIREZIONALE):
+Due cani NON possono essere in campi adiacenti nello stesso orario se 
+ALMENO UNO dei due ha reattività > 5.
+
+ESEMPI:
+✅ OK: Cane A (reattività 3) + Cane B (reattività 4) in campi adiacenti
+✅ OK: Cane A (reattività 5) + Cane B (reattività 5) in campi adiacenti
+❌ NO: Cane A (reattività 6) + Cane B (reattività 3) in campi adiacenti
+❌ NO: Cane A (reattività 8) + Cane B (reattività 7) in campi adiacenti
 
 CONFIGURAZIONE:
 - Foglio "Cani": aggiungi colonna "reattività" (valori 0-10)
@@ -102,8 +110,10 @@ def get_campi_adiacenti(campo, df_luoghi):
 
 def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_cani, df_luoghi):
     """
-    Verifica se un campo è valido per un cane con reattività > 5.
-    Restituisce True se il campo è OK, False se ci sono conflitti.
+    Verifica se un campo è valido per un cane considerando la reattività.
+    CONTROLLO BIDIREZIONALE:
+    - Se il cane DA ASSEGNARE ha reattività > 5, verifica che nei campi adiacenti non ci siano altri cani
+    - Se nei campi adiacenti ci sono CANI CON REATTIVITÀ > 5, il campo non è valido
     
     Args:
         cane: nome del cane da verificare
@@ -116,21 +126,25 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
     Returns:
         True se il campo è valido, False se ci sono conflitti di reattività
     """
-    reattivita = get_reattivita_cane(cane, df_cani)
-    
-    # Se reattività <= 5, nessun problema
-    if reattivita <= 5:
-        return True
-    
-    # Se reattività > 5, controllo campi adiacenti (dal foglio Google)
+    reattivita_cane_corrente = get_reattivita_cane(cane, df_cani)
     campi_adiacenti = get_campi_adiacenti(campo, df_luoghi)
     
-    # Verifico se nei campi adiacenti c'è già un cane allo stesso orario
+    # Verifico i cani già presenti nei campi adiacenti allo stesso orario
     for turno in turni_attuali:
         if turno["Orario"] == ora_attuale_str:
             if turno["Luogo"] in campi_adiacenti:
-                # C'è un altro cane in un campo adiacente nello stesso orario
-                return False
+                # C'è un cane in un campo adiacente
+                cane_adiacente = turno["Cane"]
+                
+                # Ignoro i turni speciali (Briefing, Pasti)
+                if cane_adiacente in ["TUTTI", "Da assegnare"]:
+                    continue
+                
+                reattivita_cane_adiacente = get_reattivita_cane(cane_adiacente, df_cani)
+                
+                # CONFLITTO se ALMENO UNO dei due ha reattività > 5
+                if reattivita_cane_corrente > 5 or reattivita_cane_adiacente > 5:
+                    return False
     
     return True
 
@@ -193,19 +207,35 @@ with tab_prog:
                             if v_scelto in vols_occupati:
                                 conflitti_volontari.append(v_scelto)
                 
-                # CONTROLLO 2: Reattività cane in campo adiacente
+                # CONTROLLO 2: Reattività cane in campo adiacente (controllo bidirezionale)
                 reattivita_cane = get_reattivita_cane(m_cane, df_c)
                 conflitto_reattivita = False
-                if reattivita_cane > 5 and m_luo != "-":
-                    if not campo_valido_per_reattivita(m_cane, m_luo, st.session_state.programma, ora_str, df_c, df_l):
-                        conflitto_reattivita = True
+                cani_problematici = []
+                
+                if m_luo != "-":
+                    campi_adi = get_campi_adiacenti(m_luo, df_l)
+                    
+                    # Verifico se ci sono conflitti con cani già assegnati
+                    for turno in st.session_state.programma:
+                        if turno["Orario"] == ora_str and turno["Luogo"] in campi_adi:
+                            cane_adiacente = turno["Cane"]
+                            if cane_adiacente not in ["TUTTI", "Da assegnare"]:
+                                reatt_adia = get_reattivita_cane(cane_adiacente, df_c)
+                                
+                                # Conflitto se ALMENO UNO dei due ha reattività > 5
+                                if reattivita_cane > 5 or reatt_adia > 5:
+                                    conflitto_reattivita = True
+                                    cani_problematici.append(f"{cane_adiacente} (reattività {reatt_adia:.0f}) in {turno['Luogo']}")
                 
                 # GESTIONE ERRORI
                 if conflitti_volontari:
                     st.error(f"⚠️ Attenzione! I seguenti volontari sono già occupati alle {ora_str}: {', '.join(conflitti_volontari)}")
                 elif conflitto_reattivita:
-                    campi_adi = get_campi_adiacenti(m_luo, df_l)
-                    st.error(f"⚠️ REATTIVITÀ! {m_cane} ha reattività > 5 ({reattivita_cane:.0f}) e ci sono già cani in campi adiacenti a '{m_luo}' alle {ora_str}. Campi adiacenti: {', '.join(campi_adi)}. Scegli un altro campo o orario.")
+                    st.error(f"⚠️ CONFLITTO REATTIVITÀ alle {ora_str}!\n\n"
+                            f"**{m_cane}** (reattività {reattivita_cane:.0f}) non può essere assegnato a '{m_luo}' perché:\n\n"
+                            f"Cani adiacenti con reattività alta:\n" + 
+                            "\n".join([f"- {c}" for c in cani_problematici]) + 
+                            f"\n\n**Regola:** Se ALMENO UN cane ha reattività > 5, non possono essere in campi adiacenti.")
                 else:
                     st.session_state.programma.append({
                         "Orario": ora_str,
