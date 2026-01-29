@@ -102,66 +102,44 @@ with tab_prog:
                 })
                 st.rerun()
 
-    # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
+    # 2. GENERAZIONE AUTOMATICA (Versione con chiavi univoche)
     c_btn1, c_btn2 = st.columns(2)
     
-    if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
+    # Aggiungiamo key="genera_automatico" per evitare errori di duplicazione
+    if c_btn1.button("🤖 Genera/Completa Automatico", key="genera_auto", use_container_width=True):
         conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # 1. SALVIAMO I MANUALI ESISTENTI
-        # Filtriamo la lista attuale tenendo solo ciò che è stato inserito manualmente
+        # 1. SALVIAMO I MANUALI (Assicurati che sia 'for' e non 'per')
         manuali_esistenti = [
             r for r in st.session_state.programma 
             if r.get("Attività") == "Manuale"
         ]
         
-    # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
-    c_btn1, c_btn2 = st.columns(2)
-    
-    if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
-        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
-        start_dt = datetime.combine(data_t, ora_i)
-        end_dt = datetime.combine(data_t, ora_f)
-        pasti_dt = end_dt - timedelta(minutes=30) 
-        
-        # 1. SALVIAMO I MANUALI ESISTENTI (Corretto 'for' invece di 'per')
-        manuali_esistenti = [
-            r for r in st.session_state.programma 
-            if r.get("Attività") == "Manuale"
-        ]
-        
-        # 2. Reset (Cancelliamo i vecchi automatici, ma teniamo i manuali in memoria)
+        # 2. Reset (Togliamo gli automatici vecchi)
         st.session_state.programma = []
         
-        # Aggiungiamo il Briefing iniziale
         st.session_state.programma.append({
             "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
         })
 
-        # 3. FILTRO CANI DA FARE
-        # Prendiamo tutti i cani selezionati (c_p)
-        # Ma togliamo quelli che sono già nei "manuali_esistenti" per non duplicarli
+        # 3. FILTRO CANI (Escludiamo quelli già inseriti a mano)
         cani_gia_assegnati = [m["Cane"] for m in manuali_esistenti]
         cani_da_fare = [c for c in c_p if c not in cani_gia_assegnati]
         
         curr_t = start_dt + timedelta(minutes=15)
         
-        # Logica Luoghi Automatici
+        # Filtro Luoghi
         luoghi_auto_ok = []
         if not df_l.empty and 'automatico' in df_l.columns:
              filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
              luoghi_auto_ok = df_l[filtro]['nome'].tolist()
         else:
              luoghi_auto_ok = l_p.copy()
-             
-        if not luoghi_auto_ok:
-            st.error("Attenzione: Nessun luogo selezionato è abilitato per l'uso 'Automatico'.")
 
-        # ALGORITMO DI ASSEGNAZIONE
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             vols_liberi = v_p.copy()
             campi_disponibili = luoghi_auto_ok.copy() 
@@ -183,8 +161,7 @@ with tab_prog:
                     vols_liberi.remove(lead)
                     batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
 
-                # Supporti
-                if vols_liberi and batch: # check batch exists
+                if vols_liberi and batch:
                     idx = 0
                     while vols_liberi:
                         batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
@@ -200,7 +177,7 @@ with tab_prog:
                     })
             curr_t += timedelta(minutes=45)
 
-        # 4. REINSERIAMO I MANUALI E I PASTI
+        # 4. REINSERIAMO I MANUALI
         st.session_state.programma.extend(manuali_esistenti)
         
         st.session_state.programma.append({
@@ -208,8 +185,9 @@ with tab_prog:
             "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
         })
         conn.close(); st.rerun()
-        
-    if c_btn2.button("🗑️ Svuota Tutto", use_container_width=True):
+
+    # Aggiungiamo key="svuota_tutto" per sicurezza
+    if c_btn2.button("🗑️ Svuota Tutto", key="svuota_tutto", use_container_width=True):
         st.session_state.programma = []; st.rerun()
 
 with tab_ana:
