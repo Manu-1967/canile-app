@@ -102,52 +102,61 @@ with tab_prog:
                 })
                 st.rerun()
 
-    # 2. GENERAZIONE AUTOMATICA (Con vincoli di luogo e filtro 'automatico')
+   # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
     c_btn1, c_btn2 = st.columns(2)
     
-    if c_btn1.button("🤖 Genera Automatico", use_container_width=True):
+    if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
         conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # Reset e Briefing
+        # 1. SALVIAMO I MANUALI ESISTENTI
+        # Filtriamo la lista attuale tenendo solo ciò che è stato inserito manualmente
+        manuali_esistenti = [
+            r per r in st.session_state.programma 
+            if r.get("Attività") == "Manuale"
+        ]
+        
+        # 2. Reset (Cancelliamo i vecchi automatici, ma teniamo i manuali in memoria)
         st.session_state.programma = []
+        
+        # Aggiungiamo il Briefing iniziale
         st.session_state.programma.append({
             "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
         })
 
-        cani_da_fare = c_p.copy()
+        # 3. FILTRO CANI DA FARE
+        # Prendiamo tutti i cani selezionati (c_p)
+        # Ma togliamo quelli che sono già nei "manuali_esistenti" per non duplicarli
+        cani_gia_assegnati = [m["Cane"] for m in manuali_esistenti]
+        cani_da_fare = [c for c in c_p if c not in cani_gia_assegnati]
+        
         curr_t = start_dt + timedelta(minutes=15)
         
-        # ### MODIFICA: Filtriamo i luoghi per l'algoritmo
-        # Prendiamo solo i luoghi che sono in l_p (selezionati dall'utente)
-        # E che hanno 'sì' nella colonna 'automatico'
+        # Logica Luoghi Automatici
         luoghi_auto_ok = []
         if not df_l.empty and 'automatico' in df_l.columns:
-             # Normalizziamo le stringhe (tutto minuscolo e senza spazi) per sicurezza
              filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
              luoghi_auto_ok = df_l[filtro]['nome'].tolist()
         else:
-             # Fallback se qualcosa va storto
              luoghi_auto_ok = l_p.copy()
              
         if not luoghi_auto_ok:
-            st.error("Attenzione: Nessun luogo selezionato è abilitato per l'uso 'Automatico' (controlla colonna 'automatico' nel foglio).")
+            st.error("Attenzione: Nessun luogo selezionato è abilitato per l'uso 'Automatico'.")
 
+        # ALGORITMO DI ASSEGNAZIONE
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             vols_liberi = v_p.copy()
-            # Usiamo solo i luoghi filtrati per l'automazione
             campi_disponibili = luoghi_auto_ok.copy() 
             
-            # Quanti cani possiamo gestire in questo slot senza sovrapporre luoghi?
             n_cani = min(len(cani_da_fare), len(campi_disponibili))
             if n_cani > 0:
                 batch = []
                 for _ in range(n_cani):
                     cane = cani_da_fare.pop(0)
-                    campo = campi_disponibili.pop(0) # UNICO per questo slot
+                    campo = campi_disponibili.pop(0)
                     
                     vols_punteggio = []
                     for v in vols_liberi:
@@ -160,10 +169,11 @@ with tab_prog:
                     batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
 
                 # Supporti
-                idx = 0
-                while vols_liberi:
-                    batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
-                    idx += 1
+                if vols_liberi and batch: # check batch exists
+                    idx = 0
+                    while vols_liberi:
+                        batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
+                        idx += 1
                 
                 for b in batch:
                     v_str = b["lead"] + (f" + {', '.join(b['sups'])}" if b["sups"] else "")
@@ -175,16 +185,17 @@ with tab_prog:
                     })
             curr_t += timedelta(minutes=45)
 
-        # Pasti (Fine shift)
+        # 4. REINSERIAMO I MANUALI E I PASTI
+        st.session_state.programma.extend(manuali_esistenti)
+        
         st.session_state.programma.append({
             "Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
             "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
         })
         conn.close(); st.rerun()
 
-    if c_btn2.button("🗑️ Svuota", use_container_width=True):
+    if c_btn2.button("🗑️ Svuota Tutto", use_container_width=True):
         st.session_state.programma = []; st.rerun()
-
     # EDITOR FINALE
     if st.session_state.programma:
         df_view = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
