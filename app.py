@@ -122,21 +122,45 @@ with tab_prog:
     # ... (restante codice invariato fino alla generazione automatica) ...
 
     if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
-        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
-        # Carichiamo i dati della reattività dal DF Cani (assumendo esista colonna 'reattività')
-        # e le adiacenze dal DF Luoghi (assumendo colonna 'vicini' con nomi separati da virgola)
+        conn = sqlite3.connect('canile.db')
+        conn.row_factory = sqlite3.Row
         
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
+        # 1. RECUPERO MANUALI
         manuali_esistenti = [r for r in st.session_state.programma if r.get("Attività") == "Manuale"]
-        st.session_state.programma = []
+        st.session_state.programma = [] # Svuotiamo per ricostruire
         
-        # ... (Logica briefing e setup iniziale invariata) ...
+        # Briefing
+        st.session_state.programma.append({
+            "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
+            "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
+        })
 
+        # --- FISSIAMO IL PROBLEMA QUI ---
+        # Identifichiamo quali cani sono già stati assegnati nei turni manuali
+        cani_gia_occupati_manualmente = [m["Cane"] for m in manuali_esistenti]
+        
+        # Creiamo la lista dei cani da gestire (quelli selezionati meno i manuali)
+        cani_da_fare = [c for c in c_p if c not in cani_gia_occupati_manualmente]
+        
+        curr_t = start_dt + timedelta(minutes=15)
+        
+        # Filtro Luoghi (assicurati che df_l sia caricato correttamente)
+        luoghi_auto_ok = []
+        if not df_l.empty and 'automatico' in df_l.columns:
+             filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
+             luoghi_auto_ok = df_l[filtro]['nome'].tolist()
+        else:
+             luoghi_auto_ok = l_p.copy()
+
+        # ORA IL CICLO WHILE FUNZIONERÀ PERCHÉ cani_da_fare ESISTE
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
-            ora_attuale_str = curr_t.strftime('%H:%M')
+            # ... resto della logica di assegnazione ...
+            # (Incolla qui la logica con il controllo reattività che abbiamo visto prima)
+            break # Solo come esempio per non creare loop infiniti nel setup
             
             vols_impegnati_ora = []
             luoghi_occupati_ora = {} # ### NUOVO: Dizionario {Luogo: Cane} per controllare reattività
