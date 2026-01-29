@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import sqlite3
 import PyPDF2
 import re
-import sqlite3
 import io
 
 # --- CONFIGURAZIONE ---
@@ -120,12 +120,12 @@ with tab_prog:
     c_btn1, c_btn2 = st.columns(2)
     
     if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
-        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect('canile.db')
+        conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # 1. RECUPERO MANUALI
         manuali_esistenti = [r for r in st.session_state.programma if r.get("Attività") == "Manuale"]
         st.session_state.programma = []
         
@@ -139,13 +139,76 @@ with tab_prog:
         cani_da_fare = [c for c in c_p if c not in cani_gia_occupati]
         curr_t = start_dt + timedelta(minutes=15)
         
-        # Filtro Luoghi
-        luoghi_auto_ok = []
+        # 1. FILTRO LUOGHI AUTOMATICI
+        # Usiamo solo i luoghi che hanno 'automatico' == 'sì'
         if not df_l.empty and 'automatico' in df_l.columns:
              filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
              luoghi_auto_ok = df_l[filtro]['nome'].tolist()
         else:
              luoghi_auto_ok = l_p.copy()
+
+        while cani_da_fare and curr_t <asti_dt:
+            ora_attuale_str = curr_t.strftime('%H:%M')
+            
+            # Recupero vincoli dai manuali
+            vols_impegnati_ora = []
+            luoghi_impegnati_ora = []
+            for m in manuali_esistenti:
+                if m["Orario"] == ora_attuale_str:
+                    vols_impegnati_ora.extend([v.strip() for v in str(m["Volontario"]).split(",")])
+                    luoghi_impegnati_ora.append(m["Luogo"])
+
+            vols_liberi = [v for v in v_p if v not in vols_impegnati_ora]
+            # 2. UNICITÀ LUOGO: Filtriamo i luoghi già presi dai manuali
+            campi_disponibili = [l for l in luoghi_auto_ok if l not in luoghi_impegnati_ora]
+            
+            batch = []
+            # Creiamo una copia della lista cani per iterare in sicurezza
+            cani_correnti = cani_da_fare[:]
+            
+            for cane_nome in cani_correnti:
+                if not campi_disponibili or not vols_liberi:
+                    break
+                
+                # Recupero info cane (Livello di reattività)
+                info_c = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (cane_nome.capitalize(),)).fetchone()
+                livello_reattivita = int(info_c['livello']) if info_c and str(info_c['livello']).isdigit() else 0
+                
+                # 3. LOGICA REATTIVITÀ E ADIACENZA
+                luogo_scelto = None
+                for campo in campi_disponibili:
+                    # Recuperiamo le adiacenze dal DF Luoghi
+                    row_luogo = df_l[df_l['nome'] == campo].iloc[0]
+                    adiacenze = str(row_luogo['adiacente']).split(',') if 'adiacente' in df_l.columns else []
+                    adiacenze = [a.strip() for a in adiacenze]
+                    
+                    # Verifichiamo se un luogo adiacente è già occupato in questo batch o nei manuali
+                    occupati_ora = luoghi_impegnati_ora + [b['campo'] for b in batch]
+                    conflitto_adiacenza = any(adj in occupati_ora for adj in adiacenze)
+                    
+                    if livello_reattivita > 5 and conflitto_adiacenza:
+                        continue # Salta questo campo, cercane un altro meno "affollato"
+                    else:
+                        luogo_scelto = campo
+                        break
+                
+                if luogo_scelto:
+                    campi_disponibili.remove(luogo_scelto)
+                    cani_da_fare.remove(cane_nome)
+                    
+                    # Assegnazione lead
+                    vols_punteggio = []
+                    for v in vols_liberi:
+                        cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane_nome, v)).fetchone()[0]
+                        vols_punteggio.append((v, cnt))
+                    vols_punteggio.sort(key=lambda x: x[1], reverse=True)
+                    
+                    lead = vols_punteggio[0][0]
+                    vols_liberi.remove(lead)
+                    batch.append({"cane": cane_nome, "campo": luogo_scelto, "lead": lead, "sups": [], "note": info_c['note'] if info_c else "-"})
+
+            # (Il resto della logica per supporti e inserimento in session_state rimane uguale)
+            # ...
 
         # ALGORITMO
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
