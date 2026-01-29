@@ -114,7 +114,7 @@ with tab_prog:
         # 1. SALVIAMO I MANUALI ESISTENTI
         # Filtriamo la lista attuale tenendo solo ciò che è stato inserito manualmente
         manuali_esistenti = [
-            r per r in st.session_state.programma 
+            r for r in st.session_state.programma 
             if r.get("Attività") == "Manuale"
         ]
         
