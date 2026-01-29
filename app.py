@@ -7,7 +7,7 @@ import sqlite3
 import io
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Canile Soft v3.1", layout="centered")
+st.set_page_config(page_title="Canile Soft v3", layout="centered")
 
 def init_db():
     conn = sqlite3.connect('canile.db')
@@ -23,7 +23,6 @@ def load_gsheets(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
-        # Pulizia nomi colonne: rimuove spazi e rende minuscolo
         df.columns = [c.strip().lower() for c in df.columns]
         return df.dropna(how='all')
     except:
@@ -63,11 +62,7 @@ with st.sidebar:
         conn.commit(); conn.close()
         st.success("Anagrafica aggiornata!")
 
-# Caricamento dati da Google Sheets
-df_c = load_gsheets("Cani")
-df_v = load_gsheets("Volontari")
-df_l = load_gsheets("Luoghi")
-
+df_c = load_gsheets("Cani"); df_v = load_gsheets("Volontari"); df_l = load_gsheets("Luoghi")
 if 'programma' not in st.session_state: st.session_state.programma = []
 
 st.title("📱 Canile Soft")
@@ -80,7 +75,7 @@ l_p = st.multiselect("📍 Luoghi disponibili", df_l['nome'].tolist() if not df_
 tab_prog, tab_ana = st.tabs(["📅 Programma", "📋 Anagrafica"])
 
 with tab_prog:
-    # 1. INSERIMENTO MANUALE
+    # 1. INSERIMENTO MANUALE (Flessibile al 100%)
     with st.expander("✍️ Inserimento Libero (Manuale)"):
         col1, col2 = st.columns(2)
         m_cane = col1.selectbox("Cane", ["-"] + c_p)
@@ -100,76 +95,69 @@ with tab_prog:
                 })
                 st.rerun()
 
-    # 2. GENERAZIONE AUTOMATICA
+    # 2. GENERAZIONE AUTOMATICA (Con vincoli di luogo)
     c_btn1, c_btn2 = st.columns(2)
     
     if c_btn1.button("🤖 Genera Automatico", use_container_width=True):
-        # --- LOGICA FILTRO LUOGHI AUTOMATICI ---
-        # Filtriamo df_l per tenere solo quelli con la colonna 'automatico' == 'sì'
-        luoghi_auto_df = df_l[df_l['automatico'].str.lower().str.strip() == 'sì']
-        nomi_luoghi_auto = luoghi_auto_df['nome'].tolist()
+        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
+        start_dt = datetime.combine(data_t, ora_i)
+        end_dt = datetime.combine(data_t, ora_f)
+        pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # Filtriamo i luoghi selezionati dall'utente (l_p) mantenendo solo quelli "automatici"
-        l_p_filtrati = [l for l in l_p if l in nomi_luoghi_auto]
+        # Reset e Briefing
+        st.session_state.programma = []
+        st.session_state.programma.append({
+            "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
+            "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
+        })
+
+        cani_da_fare = c_p.copy()
+        curr_t = start_dt + timedelta(minutes=15)
         
-        if not l_p_filtrati:
-            st.error("Nessuno dei luoghi selezionati è abilitato per la generazione automatica (colonna 'automatico' = 'sì').")
-        else:
-            conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
-            start_dt = datetime.combine(data_t, ora_i)
-            end_dt = datetime.combine(data_t, ora_f)
-            pasti_dt = end_dt - timedelta(minutes=30) 
+        while cani_da_fare and curr_t < pasti_dt:
+            vols_liberi = v_p.copy()
+            campi_disponibili = l_p.copy() # Lista luoghi freschi per ogni slot
             
-            st.session_state.programma = []
-            st.session_state.programma.append({
-                "Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
-                "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')
-            })
-
-            cani_da_fare = c_p.copy()
-            curr_t = start_dt + timedelta(minutes=15)
-            
-            while cani_da_fare and curr_t < pasti_dt:
-                vols_liberi = v_p.copy()
-                campi_disponibili = l_p_filtrati.copy() # Usiamo i luoghi filtrati!
-                
-                n_cani = min(len(cani_da_fare), len(campi_disponibili))
-                if n_cani > 0:
-                    batch = []
-                    for _ in range(n_cani):
-                        cane = cani_da_fare.pop(0)
-                        campo = campi_disponibili.pop(0)
-                        
-                        vols_punteggio = []
-                        for v in vols_liberi:
-                            cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
-                            vols_punteggio.append((v, cnt))
-                        vols_punteggio.sort(key=lambda x: x[1], reverse=True)
-                        
-                        lead = vols_punteggio[0][0]
-                        vols_liberi.remove(lead)
-                        batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
-
-                    idx = 0
-                    while vols_liberi:
-                        batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
-                        idx += 1
+            # Quanti cani possiamo gestire in questo slot senza sovrapporre luoghi?
+            n_cani = min(len(cani_da_fare), len(campi_disponibili))
+            if n_cani > 0:
+                batch = []
+                for _ in range(n_cani):
+                    cane = cani_da_fare.pop(0)
+                    campo = campi_disponibili.pop(0) # UNICO per questo slot
                     
-                    for b in batch:
-                        v_str = b["lead"] + (f" + {', '.join(b['sups'])}" if b["sups"] else "")
-                        info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (b["cane"].capitalize(),)).fetchone()
-                        st.session_state.programma.append({
-                            "Orario": curr_t.strftime('%H:%M'), "Cane": b["cane"], "Volontario": v_str, 
-                            "Luogo": b["campo"], "Note": info['note'] if info else "-", 
-                            "Inizio_Sort": curr_t.strftime('%H:%M')
-                        })
-                curr_t += timedelta(minutes=45)
+                    vols_punteggio = []
+                    for v in vols_liberi:
+                        cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
+                        vols_punteggio.append((v, cnt))
+                    vols_punteggio.sort(key=lambda x: x[1], reverse=True)
+                    
+                    lead = vols_punteggio[0][0]
+                    vols_liberi.remove(lead)
+                    batch.append({"cane": cane, "campo": campo, "lead": lead, "sups": []})
 
-            st.session_state.programma.append({
-                "Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
-                "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
-            })
-            conn.close(); st.rerun()
+                # Supporti
+                idx = 0
+                while vols_liberi:
+                    batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
+                    idx += 1
+                
+                for b in batch:
+                    v_str = b["lead"] + (f" + {', '.join(b['sups'])}" if b["sups"] else "")
+                    info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (b["cane"].capitalize(),)).fetchone()
+                    st.session_state.programma.append({
+                        "Orario": curr_t.strftime('%H:%M'), "Cane": b["cane"], "Volontario": v_str, 
+                        "Luogo": b["campo"], "Note": info['note'] if info else "-", 
+                        "Inizio_Sort": curr_t.strftime('%H:%M')
+                    })
+            curr_t += timedelta(minutes=45)
+
+        # Pasti (Fine shift)
+        st.session_state.programma.append({
+            "Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", 
+            "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
+        })
+        conn.close(); st.rerun()
 
     if c_btn2.button("🗑️ Svuota", use_container_width=True):
         st.session_state.programma = []; st.rerun()
