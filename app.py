@@ -118,7 +118,6 @@ with tab_prog:
             if r.get("Attività") == "Manuale"
         ]
         
-        # 2. Reset (Cancelliamo i vecchi automatici, ma teniamo i manuali in memoria)
     # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
     c_btn1, c_btn2 = st.columns(2)
     
@@ -128,10 +127,9 @@ with tab_prog:
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        # 1. SALVIAMO I MANUALI ESISTENTI
-        # Filtriamo la lista attuale tenendo solo ciò che è stato inserito manualmente
+        # 1. SALVIAMO I MANUALI ESISTENTI (Corretto 'for' invece di 'per')
         manuali_esistenti = [
-            r per r in st.session_state.programma 
+            r for r in st.session_state.programma 
             if r.get("Attività") == "Manuale"
         ]
         
@@ -210,7 +208,7 @@ with tab_prog:
             "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')
         })
         conn.close(); st.rerun()
-
+        
     if c_btn2.button("🗑️ Svuota Tutto", use_container_width=True):
         st.session_state.programma = []; st.rerun()
 
