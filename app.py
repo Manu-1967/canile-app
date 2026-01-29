@@ -102,7 +102,24 @@ with tab_prog:
                 })
                 st.rerun()
 
-   # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
+    # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
+    c_btn1, c_btn2 = st.columns(2)
+    
+    if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
+        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
+        start_dt = datetime.combine(data_t, ora_i)
+        end_dt = datetime.combine(data_t, ora_f)
+        pasti_dt = end_dt - timedelta(minutes=30) 
+        
+        # 1. SALVIAMO I MANUALI ESISTENTI
+        # Filtriamo la lista attuale tenendo solo ciò che è stato inserito manualmente
+        manuali_esistenti = [
+            r per r in st.session_state.programma 
+            if r.get("Attività") == "Manuale"
+        ]
+        
+        # 2. Reset (Cancelliamo i vecchi automatici, ma teniamo i manuali in memoria)
+    # 2. GENERAZIONE AUTOMATICA (Con protezione inserimenti manuali)
     c_btn1, c_btn2 = st.columns(2)
     
     if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
@@ -196,11 +213,6 @@ with tab_prog:
 
     if c_btn2.button("🗑️ Svuota Tutto", use_container_width=True):
         st.session_state.programma = []; st.rerun()
-    # EDITOR FINALE
-    if st.session_state.programma:
-        df_view = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
-        df_edited = st.data_editor(df_view, use_container_width=True, hide_index=True, num_rows="dynamic")
-        st.session_state.programma = df_edited.to_dict('records')
 
 with tab_ana:
     conn = sqlite3.connect('canile.db')
