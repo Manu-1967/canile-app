@@ -20,10 +20,17 @@ def init_db():
     conn.close()
 
 def load_gsheets(sheet_name):
+    # Link al tuo Google Sheet (assicurati che sia pubblico o accessibile)
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
         df.columns = [c.strip().lower() for c in df.columns]
+        
+        # ### MODIFICA: Gestione sicurezza colonna 'automatico' per i Luoghi
+        if sheet_name == "Luoghi" and 'automatico' not in df.columns:
+            # Se la colonna non esiste nel foglio, assumiamo 'sì' per tutto per non rompere il codice
+            df['automatico'] = 'sì'
+            
         return df.dropna(how='all')
     except:
         return pd.DataFrame()
@@ -70,16 +77,16 @@ st.title("📱 Canile Soft")
 # --- SELEZIONE RISORSE ---
 c_p = st.multiselect("🐕 Cani in turno", df_c['nome'].tolist() if not df_c.empty else [])
 v_p = st.multiselect("👤 Volontari presenti", df_v['nome'].tolist() if not df_v.empty else [])
-l_p = st.multiselect("📍 Luoghi disponibili", df_l['nome'].tolist() if not df_l.empty else [])
+l_p = st.multiselect("📍 Luoghi disponibili (Aperti oggi)", df_l['nome'].tolist() if not df_l.empty else [])
 
 tab_prog, tab_ana = st.tabs(["📅 Programma", "📋 Anagrafica"])
 
 with tab_prog:
-    # 1. INSERIMENTO MANUALE (Flessibile al 100%)
+    # 1. INSERIMENTO MANUALE (Flessibile al 100% - Qui vede TUTTI i luoghi selezionati)
     with st.expander("✍️ Inserimento Libero (Manuale)"):
         col1, col2 = st.columns(2)
         m_cane = col1.selectbox("Cane", ["-"] + c_p)
-        m_luo = col2.selectbox("Luogo", ["-"] + l_p)
+        m_luo = col2.selectbox("Luogo", ["-"] + l_p) # Qui mostriamo tutto quello che hai selezionato sopra
         m_vols = st.multiselect("Volontari assegnati", v_p)
         m_ora = st.time_input("Ora Inizio", ora_i)
         
@@ -95,7 +102,7 @@ with tab_prog:
                 })
                 st.rerun()
 
-    # 2. GENERAZIONE AUTOMATICA (Con vincoli di luogo)
+    # 2. GENERAZIONE AUTOMATICA (Con vincoli di luogo e filtro 'automatico')
     c_btn1, c_btn2 = st.columns(2)
     
     if c_btn1.button("🤖 Genera Automatico", use_container_width=True):
@@ -114,9 +121,25 @@ with tab_prog:
         cani_da_fare = c_p.copy()
         curr_t = start_dt + timedelta(minutes=15)
         
-        while cani_da_fare and curr_t < pasti_dt:
+        # ### MODIFICA: Filtriamo i luoghi per l'algoritmo
+        # Prendiamo solo i luoghi che sono in l_p (selezionati dall'utente)
+        # E che hanno 'sì' nella colonna 'automatico'
+        luoghi_auto_ok = []
+        if not df_l.empty and 'automatico' in df_l.columns:
+             # Normalizziamo le stringhe (tutto minuscolo e senza spazi) per sicurezza
+             filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
+             luoghi_auto_ok = df_l[filtro]['nome'].tolist()
+        else:
+             # Fallback se qualcosa va storto
+             luoghi_auto_ok = l_p.copy()
+             
+        if not luoghi_auto_ok:
+            st.error("Attenzione: Nessun luogo selezionato è abilitato per l'uso 'Automatico' (controlla colonna 'automatico' nel foglio).")
+
+        while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             vols_liberi = v_p.copy()
-            campi_disponibili = l_p.copy() # Lista luoghi freschi per ogni slot
+            # Usiamo solo i luoghi filtrati per l'automazione
+            campi_disponibili = luoghi_auto_ok.copy() 
             
             # Quanti cani possiamo gestire in questo slot senza sovrapporre luoghi?
             n_cani = min(len(cani_da_fare), len(campi_disponibili))
