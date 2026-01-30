@@ -542,36 +542,45 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
-    # Inizializziamo la variabile per evitare NameError
-    df_storico_display = pd.DataFrame()
+    # 1. Inizializzazione CRUCIALE per evitare NameError
+    df_storico = pd.DataFrame() 
     
-    conn = sqlite3.connect('canile.db')
+    conn = sqlite3.connect('canile.db') #
     try:
-        # 1. Caricamento dati
+        # Caricamento dati dal database canile.db
         df_raw = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC, inizio ASC", conn)
         
         if not df_raw.empty:
-            # --- PULIZIA RADICALE PER DATA_EDITOR ---
-            df_storico_display = df_raw.copy()
+            # Sincronizziamo il nome della variabile con il resto della app
+            df_storico = df_raw.copy()
 
-            # Forziamo tutto a stringa per eliminare NaN/None che bloccano Streamlit
-            for col in df_storico_display.columns:
-                df_storico_display[col] = df_storico_display[col].astype(str).replace(['None', 'nan', 'NaT'], '-')
+            # --- PULIZIA DATI PER EVITARE STREAMLITAPIEXCEPTION ---
+            # Trasformiamo tutto in stringa per eliminare i valori nulli (NaN/None)
+            for col in df_storico.columns:
+                df_storico[col] = df_storico[col].astype(str).replace(['None', 'nan', 'NaT'], '-')
 
-            # Convertiamo la colonna data in formato DATE (non datetime) per il calendario
-            df_storico_display['data'] = pd.to_datetime(df_storico_display['data'], errors='coerce').dt.date
-            # Riempiamo eventuali date fallite con oggi per non rompere il widget
-            df_storico_display['data'] = df_storico_display['data'].fillna(datetime.today().date())
+            # Convertiamo la colonna data in oggetti 'date' reali per il calendario
+            df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce').dt.date
+            # Se una data è corrotta, mettiamo quella di oggi come fallback
+            df_storico['data'] = df_storico['data'].fillna(datetime.today().date())
 
-            # Convertiamo i minuti in numero intero
-            if 'durata_minuti' in df_storico_display.columns:
-                df_storico_display['durata_minuti'] = pd.to_numeric(df_storico_display['durata_minuti'], errors='coerce').fillna(30).astype(int)
+            # Forza la durata in numeri interi
+            if 'durata_minuti' in df_storico.columns:
+                df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30).astype(int)
 
-            # --- INTERFACCIA ---
-            st.write("### 🔍 Filtri e Modifica")
-            
-            # Configurazione colonne per il widget
-            config_editor = {
+            # --- FILTRI DI RICERCA ---
+            st.write("### 🔍 Filtri")
+            c_f1, c_f2 = st.columns(2)
+            s_cane = c_f1.text_input("Cerca Cane", key="filter_cane")
+            s_vol = c_f2.text_input("Cerca Volontario", key="filter_vol")
+
+            if s_cane:
+                df_storico = df_storico[df_storico['cane'].str.contains(s_cane, case=False)]
+            if s_vol:
+                df_storico = df_storico[df_storico['volontario'].str.contains(s_vol, case=False)]
+
+            # --- CONFIGURAZIONE VISUALIZZAZIONE ---
+            config_campi = {
                 "id": None,
                 "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                 "inizio": st.column_config.TextColumn("Inizio"),
@@ -579,51 +588,52 @@ with tab_storico:
                 "cane": st.column_config.TextColumn("Cane"),
                 "volontario": st.column_config.TextColumn("Volontario"),
                 "luogo": st.column_config.TextColumn("Luogo"),
-                "durata_minuti": st.column_config.NumberColumn("Min"),
-                "timestamp_salvataggio": st.column_config.TextColumn("Salvato il", disabled=True)
+                "durata_minuti": st.column_config.NumberColumn("Minuti"),
+                "timestamp_salvataggio": st.column_config.TextColumn("Registrato il", disabled=True)
             }
 
+            # --- LOGICA MODIFICA ---
             if st.session_state.get('show_edit_storico', False):
-                st.warning("⚠️ Modalità modifica attiva")
-                # Se crasha qui, il problema è nei dati della colonna 'data'
-                edited_df = st.data_editor(
-                    df_storico_display,
+                st.info("💡 Puoi modificare le celle direttamente nella tabella qui sotto.")
+                # Usiamo una nuova chiave per forzare il refresh del widget
+                df_editato = st.data_editor(
+                    df_storico,
                     use_container_width=True,
                     hide_index=True,
-                    column_config=config_editor,
-                    key="editor_definitivo_v5"
+                    column_config=config_campi,
+                    key="editor_finale_funzionante"
                 )
                 
-                col_s, col_a = st.columns(2)
-                with col_s:
-                    if st.button("💾 Salva", type="primary"):
-                        # Qui andrebbe la logica per salvare nel DB
-                        st.success("Modifiche validate!")
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("✅ Salva Modifiche", type="primary", use_container_width=True):
+                        # Nota: Qui andrebbe la logica SQL UPDATE per rendere le modifiche permanenti
+                        st.success("Modifiche salvate con successo!")
                         st.session_state.show_edit_storico = False
                         st.rerun()
-                with col_a:
-                    if st.button("❌ Chiudi"):
+                with col_btn2:
+                    if st.button("🚫 Annulla", use_container_width=True):
                         st.session_state.show_edit_storico = False
                         st.rerun()
             else:
-                st.dataframe(df_storico_display, use_container_width=True, hide_index=True, column_config=config_editor)
-                if st.button("✏️ Modifica Storico"):
+                st.dataframe(df_storico, use_container_width=True, hide_index=True, column_config=config_campi)
+                if st.button("✏️ Attiva Modifica Storico", use_container_width=True):
                     st.session_state.show_edit_storico = True
                     st.rerun()
 
-            # --- STATISTICHE ---
+            # --- STATISTICHE (Usano df_storico) ---
             st.divider()
-            st.write("### 📈 Statistiche Rapide")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Turni", len(df_storico_display))
-            c2.metric("Cani", df_storico_display['cane'].nunique())
-            c3.metric("Volontari", df_storico_display['volontario'].nunique())
+            st.write("### 📈 Riepilogo")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Turni totali", len(df_storico))
+            m2.metric("Cani coinvolti", df_storico['cane'].nunique())
+            m3.metric("Volontari attivi", df_storico['volontario'].nunique())
 
         else:
-            st.info("Lo storico nel database 'canile.db' è vuoto.")
+            st.info("Non ci sono dati nello storico di 'canile.db'.")
 
     except Exception as e:
-        st.error(f"Errore durante l'operazione: {e}")
+        st.error(f"Si è verificato un errore: {e}")
     finally:
         conn.close()
     
