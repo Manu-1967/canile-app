@@ -346,7 +346,7 @@ with tab_prog:
                 "Guinzaglieria": st.column_config.TextColumn("🦮 Guinzaglio", width="medium"),
                 "Strumenti": st.column_config.TextColumn("🛠️ Strumenti", width="medium"),
                 "Note": st.column_config.TextColumn("📝 Note", width="large"),
-                "Tempo PDF": st.column_config.TextColumn("⏳ Durata PDF", width="small")
+                "Tempo PDF": st.column_config.TextColumn("⏳ Durata", width="small")
             }
         )
         st.caption("💡 Suggerimento: Su smartphone, scorri la tabella verso destra per vedere Cibo, Strumenti e Note.")
