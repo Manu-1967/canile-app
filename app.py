@@ -11,10 +11,12 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Programma Canile Pro", layout="wide")
 
 def init_db():
+    """Crea il file locale canile.db se non esiste. Serve per l'anagrafica PDF."""
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS storico 
                  (data TEXT, inizio TEXT, cane TEXT, volontario TEXT, luogo TEXT)''')
+    # Struttura pulita senza colonna "livello"
     c.execute('''CREATE TABLE IF NOT EXISTS anagrafica_cani 
                  (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, strumenti TEXT, 
                   attivita TEXT, note TEXT, tempo TEXT)''')
@@ -22,133 +24,116 @@ def init_db():
     conn.close()
 
 def parse_dog_pdf(uploaded_file):
+    """Legge il PDF e cerca i titoli in MAIUSCOLO."""
     reader = PyPDF2.PdfReader(uploaded_file)
     full_text = ""
     for page in reader.pages:
         full_text += page.extract_text() + "\n"
+
     headers = ["CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
     nome_cane = uploaded_file.name.replace(".pdf", "").replace(".PDF", "").strip()
     dati_estratti = {"nome": nome_cane}
+
     for i, header in enumerate(headers):
-        pattern = f"{header}(.*?){headers[i+1]}" if i < len(headers)-1 else f"{header}(.*)$"
+        if i < len(headers) - 1:
+            next_header = headers[i+1]
+            pattern = f"{header}(.*?){next_header}"
+        else:
+            pattern = f"{header}(.*)$"
         match = re.search(pattern, full_text, re.DOTALL)
-        dati_estratti[header.lower().replace("à", "a")] = match.group(1).strip() if match else ""
+        if match:
+            testo = match.group(1).strip()
+            dati_estratti[header.lower().replace("à", "a")] = testo
+        else:
+            dati_estratti[header.lower().replace("à", "a")] = ""
     return dati_estratti
 
 def salva_anagrafica_db(dati):
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?)''', 
-              (dati['nome'], dati.get('cibo',''), dati.get('guinzaglieria',''), 
-               dati.get('strumenti',''), dati.get('attivita',''), dati.get('note',''), dati.get('tempo','')))
+    c.execute('''INSERT OR REPLACE INTO anagrafica_cani 
+                 (nome, cibo, guinzaglieria, strumenti, attivita, note, tempo) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+              (dati['nome'], dati.get('cibo', ''), dati.get('guinzaglieria', ''), 
+               dati.get('strumenti', ''), dati.get('attivita', ''), 
+               dati.get('note', ''), dati.get('tempo', '')))
     conn.commit()
     conn.close()
 
-def get_info_cane(nome_cane):
-    conn = sqlite3.connect('canile.db')
-    df = pd.read_sql_query("SELECT * FROM anagrafica_cani WHERE nome=?", conn, params=(nome_cane,))
-    conn.close()
-    return df.iloc[0].to_dict() if not df.empty else {}
-
 def load_gsheets(sheet_name):
+    """Carica la lista cani e volontari dal tuo Google Sheet."""
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
         df.columns = [c.strip().lower() for c in df.columns]
         return df.dropna(how='all')
-    except: return pd.DataFrame()
+    except:
+        return pd.DataFrame()
 
 def esporta_immagine(df):
-    if df.empty: return None
-    fig, ax = plt.subplots(figsize=(22, len(df)*0.9 + 2)) 
+    fig, ax = plt.subplots(figsize=(12, len(df)*0.6 + 1))
     ax.axis('off')
-    tabla = ax.table(cellText=df.values, colLabels=df.columns, cellLoc='left', loc='center')
+    tabla = ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
     tabla.auto_set_font_size(False)
-    tabla.set_fontsize(9)
-    tabla.scale(1.0, 2.2) 
+    tabla.set_fontsize(10)
+    tabla.scale(1.2, 1.2)
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
     return buf.getvalue()
 
-# Inizializzazione
+# Inizializzazione DB
 init_db()
 if 'programma' not in st.session_state: st.session_state.programma = []
 
-st.title("🐾 Programma Canile Pro")
+# --- INTERFACCIA ---
+st.title("🐾 Gestione Programma Canile")
 
 with st.sidebar:
-    st.header("📂 Importazione")
-    pdf_files = st.file_uploader("Carica PDF Cani", accept_multiple_files=True, type="pdf")
-    if pdf_files and st.button("Aggiorna Database"):
+    st.header("⚙️ Impostazioni")
+    data_t = st.date_input("Giorno", datetime.today())
+    st.divider()
+    st.header("📂 Carica PDF")
+    pdf_files = st.file_uploader("Trascina qui i PDF dei cani", accept_multiple_files=True, type="pdf")
+    if pdf_files and st.button("Leggi PDF e aggiorna"):
         for pdf in pdf_files:
-            salva_anagrafica_db(parse_dog_pdf(pdf))
-        st.success("Database PDF aggiornato!")
-    data_t = st.date_input("Data Turno", datetime.today())
+            dati = parse_dog_pdf(pdf)
+            salva_anagrafica_db(dati)
+        st.success("Dati estratti salvati correttamente!")
 
+# Caricamento dati dai tuoi Fogli Google
 df_c = load_gsheets("Cani")
 df_v = load_gsheets("Volontari")
 df_l = load_gsheets("Luoghi")
 
-tab_prog, tab_ana = st.tabs(["📅 Gestione Programma", "📋 Anagrafica PDF"])
+tab_prog, tab_ana = st.tabs(["📅 Programma del Giorno", "📋 Schede Cani (da PDF)"])
 
 with tab_prog:
-    # --- AGGIUNTA TURNO ---
-    with st.expander("➕ Inserisci un nuovo turno"):
-        col1, col2, col3 = st.columns(3)
-        c_sel = col1.selectbox("Cane", ["-"] + (df_c['nome'].tolist() if not df_c.empty else []))
-        v_sel = col2.multiselect("Volontari", df_v['nome'].tolist() if not df_v.empty else [])
-        l_sel = col3.selectbox("Luogo", ["-"] + (df_l['nome'].tolist() if not df_l.empty else []))
-        
-        col_t = st.columns(1)[0]
-        o_sel = col_t.time_input("Orario inizio", datetime.strptime("08:00", "%H:%M"))
-        
-        if st.button("Aggiungi Cane al Programma"):
-            if c_sel != "-":
-                info = get_info_cane(c_sel)
-                st.session_state.programma.append({
-                    "Ora": o_sel.strftime('%H:%M'),
-                    "Cane": c_sel,
-                    "Volontari": ", ".join(v_sel),
-                    "Luogo": l_sel,
-                    "Cibo": info.get('cibo', '-'),
-                    "Guinzaglio": info.get('guinzaglieria', '-'),
-                    "Strumenti": info.get('strumenti', '-'),
-                    "Attività": info.get('attivita', '-'),
-                    "Note": info.get('note', '-'),
-                    "Tempo": info.get('tempo', '-')
-                })
-                st.rerun()
+    c_p = st.multiselect("🐕 Seleziona Cani", df_c['nome'].tolist() if not df_c.empty else [])
+    v_p = st.multiselect("👤 Volontari in turno", df_v['nome'].tolist() if not df_v.empty else [])
+    
+    # Se un cane è selezionato, mostriamo un piccolo avviso se ci sono note nel DB
+    if c_p:
+        conn = sqlite3.connect('canile.db')
+        note_df = pd.read_sql_query(f"SELECT nome, note, guinzaglieria FROM anagrafica_cani WHERE nome IN ({','.join(['?']*len(c_p))})", conn, params=c_p)
+        conn.close()
+        if not note_df.empty:
+            with st.expander("⚠️ Note rapide cani selezionati"):
+                for _, row in note_df.iterrows():
+                    st.write(f"**{row['nome']}**: {row['note']} (Usa: {row['guinzaglieria']})")
 
-    # --- VISUALIZZAZIONE E MODIFICA ---
-    if st.session_state.programma:
-        st.subheader("📝 Programma Attuale")
-        df_p = pd.DataFrame(st.session_state.programma).sort_values("Ora")
-        
-        # Editor per modifiche manuali dell'ultimo minuto
-        edited_df = st.data_editor(df_p, use_container_width=True, hide_index=True)
-        st.session_state.programma = edited_df.to_dict('records')
+    if st.button("🗑️ Svuota Programma"):
+        st.session_state.programma = []
+        st.rerun()
 
-        # --- AZIONI SULLE RIGHE ---
-        st.divider()
-        c_del, c_clear, c_save = st.columns([2, 1, 1])
-        
-        # Rimuovere una singola riga
-        cane_da_rimuovere = c_del.selectbox("❌ Seleziona cane da rimuovere:", ["-"] + edited_df['Cane'].tolist())
-        if c_del.button("Rimuovi riga selezionata"):
-            if cane_da_rimuovere != "-":
-                st.session_state.programma = [r for r in st.session_state.programma if r['Cane'] != cane_da_rimuovere]
-                st.rerun()
-
-        if c_clear.button("🗑️ Svuota Tutto"):
-            st.session_state.programma = []
-            st.rerun()
-
-        # Scaricamento immagine
-        img_data = esporta_immagine(edited_df)
-        if img_data:
-            st.download_button("📸 Scarica Immagine WhatsApp", data=img_data, file_name=f"programma_{data_t}.png", mime="image/png")
+    # Qui puoi aggiungere i turni...
+    # (Inserire logica di aggiunta o generazione automatica)
 
 with tab_ana:
+    st.header("📋 Informazioni estratte dai PDF")
     conn = sqlite3.connect('canile.db')
-    st.dataframe(pd.read_sql_query("SELECT * FROM anagrafica_cani", conn), use_container_width=True, hide_index=True)
+    df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
     conn.close()
+    if not df_db.empty:
+        st.dataframe(df_db, use_container_width=True, hide_index=True)
+    else:
+        st.info("L'anagrafica è vuota. Carica i PDF nella barra laterale.")
