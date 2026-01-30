@@ -571,7 +571,7 @@ with tab_storico:
             FROM storico 
             ORDER BY data DESC, inizio ASC
         """
-        
+        df_storico = pd.read_sql_query(query, conn) 
     # ... (codice precedente invariato fino a df_storico = pd.read_sql_query)
 
 if not df_storico.empty:
