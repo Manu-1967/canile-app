@@ -45,7 +45,6 @@ def salva_anagrafica_db(dati):
     conn.close()
 
 def get_info_cane(nome_cane):
-    """Recupera tutte le info del PDF dal database locale."""
     conn = sqlite3.connect('canile.db')
     df = pd.read_sql_query("SELECT * FROM anagrafica_cani WHERE nome=?", conn, params=(nome_cane,))
     conn.close()
@@ -60,13 +59,14 @@ def load_gsheets(sheet_name):
     except: return pd.DataFrame()
 
 def esporta_immagine(df):
-    # Aumentiamo la dimensione della figura perché ora ci sono molte colonne
-    fig, ax = plt.subplots(figsize=(20, len(df)*0.8 + 2)) 
+    # Regoliamo la larghezza in base al numero di colonne per non tagliare il testo
+    fig, ax = plt.subplots(figsize=(22, len(df)*0.9 + 2)) 
     ax.axis('off')
+    # Creazione tabella con allineamento a sinistra per le note lunghe
     tabla = ax.table(cellText=df.values, colLabels=df.columns, cellLoc='left', loc='center')
     tabla.auto_set_font_size(False)
     tabla.set_fontsize(9)
-    tabla.scale(1.2, 1.8)
+    tabla.scale(1.0, 2.2) # Aumentata l'altezza delle celle per i testi lunghi
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
     return buf.getvalue()
@@ -75,62 +75,76 @@ def esporta_immagine(df):
 init_db()
 if 'programma' not in st.session_state: st.session_state.programma = []
 
-st.title("🐾 Programma Canile con Dati PDF")
+st.title("🐾 Programma Canile con Modifica Rapida")
 
 with st.sidebar:
-    st.header("📂 Carica schede PDF")
-    pdf_files = st.file_uploader("Trascina i PDF", accept_multiple_files=True, type="pdf")
-    if pdf_files and st.button("🔄 Aggiorna Database Cani"):
+    st.header("📂 Caricamento PDF")
+    pdf_files = st.file_uploader("Trascina qui i file", accept_multiple_files=True, type="pdf")
+    if pdf_files and st.button("🔄 Aggiorna Database"):
         for pdf in pdf_files:
             salva_anagrafica_db(parse_dog_pdf(pdf))
-        st.success("Anagrafica sincronizzata!")
-    data_t = st.date_input("Data", datetime.today())
+        st.success("Dati PDF salvati!")
+    data_t = st.date_input("Data Turno", datetime.today())
 
 df_c = load_gsheets("Cani")
 df_v = load_gsheets("Volontari")
 df_l = load_gsheets("Luoghi")
 
-tab_prog, tab_ana = st.tabs(["📅 Programma Completo", "📋 Database PDF"])
+tab_prog, tab_ana = st.tabs(["📅 Gestione Turni", "📋 Database Cani"])
 
 with tab_prog:
-    col1, col2, col3 = st.columns(3)
-    c_sel = col1.selectbox("Cane", ["-"] + (df_c['nome'].tolist() if not df_c.empty else []))
-    v_sel = col2.multiselect("Volontari", df_v['nome'].tolist() if not df_v.empty else [])
-    l_sel = col3.selectbox("Luogo", ["-"] + (df_l['nome'].tolist() if not df_l.empty else []))
-    
-    col_t, col_a = st.columns(2)
-    o_sel = col_t.time_input("Ora", datetime.strptime("08:00", "%H:%M"))
-    
-    if st.button("➕ Aggiungi al Programma"):
-        info = get_info_cane(c_sel)
-        st.session_state.programma.append({
-            "Ora": o_sel.strftime('%H:%M'),
-            "Cane": c_sel,
-            "Volontari": ", ".join(v_sel),
-            "Luogo": l_sel,
-            "Cibo": info.get('cibo', '-'),
-            "Guinzaglio": info.get('guinzaglieria', '-'),
-            "Strumenti": info.get('strumenti', '-'),
-            "Attività": info.get('attivita', '-'),
-            "Note": info.get('note', '-'),
-            "Tempo": info.get('tempo', '-')
-        })
-        st.rerun()
+    # --- AREA INSERIMENTO ---
+    with st.expander("➕ Aggiungi Nuovo Turno", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        c_sel = c1.selectbox("Cane", ["-"] + (df_c['nome'].tolist() if not df_c.empty else []))
+        v_sel = c2.multiselect("Volontari", df_v['nome'].tolist() if not df_v.empty else [])
+        l_sel = c3.selectbox("Luogo", ["-"] + (df_l['nome'].tolist() if not df_l.empty else []))
+        
+        c4, c5 = st.columns(2)
+        o_sel = c4.time_input("Ora Inizio", datetime.strptime("08:00", "%H:%M"))
+        
+        if st.button("Inserisci Turno"):
+            if c_sel != "-":
+                info = get_info_cane(c_sel)
+                st.session_state.programma.append({
+                    "Ora": o_sel.strftime('%H:%M'),
+                    "Cane": c_sel,
+                    "Volontari": ", ".join(v_sel),
+                    "Luogo": l_sel,
+                    "Cibo": info.get('cibo', '-'),
+                    "Guinzaglio": info.get('guinzaglieria', '-'),
+                    "Strumenti": info.get('strumenti', '-'),
+                    "Attività": info.get('attivita', '-'),
+                    "Note": info.get('note', '-'),
+                    "Tempo": info.get('tempo', '-')
+                })
+                st.rerun()
 
+    # --- TABELLA EDITABILE ---
     if st.session_state.programma:
-        df_display = pd.DataFrame(st.session_state.programma).sort_values("Ora")
-        st.subheader("📝 Anteprima Turni")
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.subheader("📝 Modifica e Personalizza")
+        st.info("💡 Puoi cliccare su qualsiasi cella (Note, Cibo, ecc.) per modificare il testo manualmente.")
+        
+        df_edit = pd.DataFrame(st.session_state.programma).sort_values("Ora")
+        
+        # st.data_editor permette la modifica manuale dei dati estratti
+        edited_df = st.data_editor(df_edit, use_container_width=True, hide_index=True)
+        
+        # Sincronizza le modifiche fatte a mano
+        st.session_state.programma = edited_df.to_dict('records')
         
         st.divider()
-        if st.button("🗑️ Svuota Tutto"):
+        col_del, col_down = st.columns([1, 1])
+        
+        if col_del.button("🗑️ Svuota Tutto"):
             st.session_state.programma = []
             st.rerun()
             
-        img_data = esporta_immagine(df_display)
-        st.download_button("📸 Scarica Tabellone WhatsApp", data=img_data, file_name="programma.png", mime="image/png")
+        # Generazione immagine con i dati (eventualmente modificati)
+        img_data = esporta_immagine(edited_df)
+        col_down.download_button("📸 Scarica per WhatsApp", data=img_data, file_name=f"programma_{data_t}.png", mime="image/png")
 
 with tab_ana:
     conn = sqlite3.connect('canile.db')
-    st.dataframe(pd.read_sql_query("SELECT * FROM anagrafica_cani", conn), use_container_width=True)
+    st.dataframe(pd.read_sql_query("SELECT * FROM anagrafica_cani", conn), use_container_width=True, hide_index=True)
     conn.close()
