@@ -15,7 +15,7 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS storico (data TEXT, inizio TEXT, cane TEXT, volontario TEXT, luogo TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS anagrafica_cani 
                  (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, strumenti TEXT, 
-                  attivita TEXT, note TEXT, tempo TEXT)''')
+                  attivita TEXT, note TEXT, tempo TEXT, livello TEXT)''')
     conn.commit()
     conn.close()
 
@@ -46,46 +46,13 @@ def load_gsheets(sheet_name):
         return pd.DataFrame()
 
 def parse_pdf_content(text):
-    """
-    Estrae i campi dal PDF cercando i titoli in MAIUSCOLO.
-    I titoli sono: CIBO, GUINZAGLIERIA, STRUMENTI, ATTIVITÀ, NOTE, TEMPO
-    Il contenuto di ogni campo è il testo che segue il titolo fino al prossimo titolo o fino alla fine.
-    """
-    # Lista dei campi da estrarre (nell'ordine in cui appaiono nel PDF)
-    campi = ['CIBO', 'GUINZAGLIERIA', 'STRUMENTI', 'ATTIVITÀ', 'NOTE', 'TEMPO']
+    campi = ['CIBO', 'GUINZAGLIERIA', 'STRUMENTI', 'ATTIVITÀ', 'NOTE', 'TEMPO', 'LIVELLO']
     dati_estratti = {c: "N/D" for c in campi}
-    
-    # Pulizia preliminare del testo
-    text = text.replace('\n\n', '\n').replace('\r', '')
-    
-    for i, campo in enumerate(campi):
-        # Pattern migliorato: cerca il campo in maiuscolo (con possibili : o spazi dopo)
-        # e cattura tutto fino al prossimo campo maiuscolo o fine testo
-        
-        # Creo il pattern per il campo successivo (se esiste)
-        if i < len(campi) - 1:
-            # Non è l'ultimo campo: cerco fino al prossimo campo
-            prossimi_campi = '|'.join(campi[i+1:])
-            pattern = rf"{campo}[\s:]*\n+(.*?)(?=\n+(?:{prossimi_campi})[\s:]|\Z)"
-        else:
-            # È l'ultimo campo (TEMPO): cerco fino alla fine
-            pattern = rf"{campo}[\s:]*\n+(.*?)(?=\Z)"
-        
+    for campo in campi:
+        pattern = rf"{campo}[:\s\n]+(.*?)(?=\n(?:{'|'.join(campi)})[:\s]|$)"
         match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         if match:
-            contenuto = match.group(1).strip()
-            # Rimuovo eventuali righe vuote multiple
-            contenuto = re.sub(r'\n\s*\n', '\n', contenuto)
-            dati_estratti[campo] = contenuto if contenuto else "N/D"
-        else:
-            # Tentativo alternativo: cerca il campo seguito da qualsiasi testo fino al prossimo campo in maiuscolo
-            pattern_alt = rf"{campo}[\s:]*(.+?)(?=(?:{'|'.join(campi[i+1:]) if i < len(campi)-1 else 'XXXXXX'})[\s:]|\Z)"
-            match_alt = re.search(pattern_alt, text, re.DOTALL | re.IGNORECASE)
-            if match_alt:
-                contenuto = match_alt.group(1).strip()
-                contenuto = re.sub(r'\n\s*\n', '\n', contenuto)
-                dati_estratti[campo] = contenuto if contenuto else "N/D"
-    
+            dati_estratti[campo] = match.group(1).strip()
     return dati_estratti
 
 def get_reattivita_cane(nome_cane, df_cani):
@@ -153,29 +120,6 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
     
     return True
 
-def get_info_cane(nome_cane):
-    """
-    Recupera le informazioni complete di un cane dall'anagrafica.
-    Restituisce un dizionario con tutti i campi, o valori "N/D" se il cane non è trovato.
-    """
-    conn = sqlite3.connect('canile.db')
-    conn.row_factory = sqlite3.Row
-    try:
-        row = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (nome_cane.capitalize(),)).fetchone()
-        if row:
-            return {
-                'CIBO': row['cibo'] or 'N/D',
-                'GUINZAGLIERIA': row['guinzaglieria'] or 'N/D',
-                'STRUMENTI': row['strumenti'] or 'N/D',
-                'ATTIVITÀ': row['attivita'] or 'N/D',
-                'NOTE': row['note'] or 'N/D',
-                'TEMPO': row['tempo'] or 'N/D'
-            }
-        else:
-            return {campo: 'N/D' for campo in ['CIBO', 'GUINZAGLIERIA', 'STRUMENTI', 'ATTIVITÀ', 'NOTE', 'TEMPO']}
-    finally:
-        conn.close()
-
 def salva_turni_in_storico(programma, data):
     """
     Salva tutti i turni del programma giornaliero nello storico del database.
@@ -240,9 +184,9 @@ with st.sidebar:
             text = " ".join([page.extract_text() for page in reader.pages])
             info = parse_pdf_content(text)
             nome_cane = f.name.split('.')[0].strip().capitalize()
-            conn.execute("INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?)", 
+            conn.execute("INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?,?)", 
                          (nome_cane, info['CIBO'], info['GUINZAGLIERIA'], info['STRUMENTI'], 
-                          info['ATTIVITÀ'], info['NOTE'], info['TEMPO']))
+                          info['ATTIVITÀ'], info['NOTE'], info['TEMPO'], info['LIVELLO']))
         conn.commit(); conn.close()
         st.success("Anagrafica aggiornata!")
 
@@ -310,22 +254,13 @@ with tab_prog:
                             "\n".join([f"- {c}" for c in cani_problematici]) + 
                             f"\n\n**Regola:** Se ALMENO UN cane ha reattività > 5, non possono essere in campi adiacenti.")
                 else:
-                    # Recupero info del cane
-                    info_cane = get_info_cane(m_cane)
-                    
                     st.session_state.programma.append({
                         "Orario": ora_str,
                         "Cane": m_cane, 
                         "Volontario": ", ".join(m_vols) if m_vols else "Da assegnare", 
                         "Luogo": m_luo, 
                         "Attività": "Manuale", 
-                        "Inizio_Sort": ora_str,
-                        "CIBO": info_cane['CIBO'],
-                        "GUINZAGLIERIA": info_cane['GUINZAGLIERIA'],
-                        "STRUMENTI": info_cane['STRUMENTI'],
-                        "ATTIVITÀ_CANE": info_cane['ATTIVITÀ'],
-                        "NOTE": info_cane['NOTE'],
-                        "TEMPO": info_cane['TEMPO']
+                        "Inizio_Sort": ora_str
                     })
                     st.success(f"✅ Turno delle {ora_str} aggiunto!")
                     st.rerun()
@@ -431,21 +366,15 @@ with tab_prog:
                             
                             # *** FIX CRITICO: AGGIUNGO IL TURNO IMMEDIATAMENTE ***
                             # In questo modo il prossimo cane vedrà questo cane quando fa il controllo!
-                            info_cane = get_info_cane(cane)
-                            
+                            info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (cane.capitalize(),)).fetchone()
                             st.session_state.programma.append({
                                 "Orario": ora_attuale_str, 
                                 "Cane": cane, 
                                 "Volontario": lead,  # Per ora solo il lead, supporti dopo
                                 "Luogo": campo, 
+                                "Note": info['note'] if info else "-", 
                                 "Inizio_Sort": ora_attuale_str, 
-                                "Attività": "Automatico",
-                                "CIBO": info_cane['CIBO'],
-                                "GUINZAGLIERIA": info_cane['GUINZAGLIERIA'],
-                                "STRUMENTI": info_cane['STRUMENTI'],
-                                "ATTIVITÀ_CANE": info_cane['ATTIVITÀ'],
-                                "NOTE": info_cane['NOTE'],
-                                "TEMPO": info_cane['TEMPO']
+                                "Attività": "Automatico"
                             })
                             
                             cani_assegnati_questa_fascia += 1
@@ -501,12 +430,6 @@ with tab_prog:
         st.subheader("📋 Programma Giornaliero")
         
         df_view = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
-        
-        # Assicuro che tutte le colonne esistano (per compatibilità con turni vecchi)
-        for col in ['CIBO', 'GUINZAGLIERIA', 'STRUMENTI', 'ATTIVITÀ_CANE', 'NOTE', 'TEMPO']:
-            if col not in df_view.columns:
-                df_view[col] = 'N/D'
-        
         df_edited = st.data_editor(
             df_view, 
             use_container_width=True, 
@@ -518,12 +441,6 @@ with tab_prog:
                 "Volontario": st.column_config.TextColumn("👤 Volontari", width="large"),
                 "Luogo": st.column_config.TextColumn("📍 Luogo", width="medium"),
                 "Attività": st.column_config.TextColumn("🎯 Tipo", width="small"),
-                "CIBO": st.column_config.TextColumn("🍖 Cibo", width="medium"),
-                "GUINZAGLIERIA": st.column_config.TextColumn("🦴 Guinzaglieria", width="medium"),
-                "STRUMENTI": st.column_config.TextColumn("🔧 Strumenti", width="medium"),
-                "ATTIVITÀ_CANE": st.column_config.TextColumn("🎾 Attività", width="medium"),
-                "NOTE": st.column_config.TextColumn("📝 Note", width="large"),
-                "TEMPO": st.column_config.TextColumn("⏱️ Tempo", width="small"),
             }
         )
         st.session_state.programma = df_edited.to_dict('records')
@@ -543,20 +460,7 @@ with tab_ana:
                 st.rerun()
         
         st.divider()
-        st.dataframe(
-            df_db, 
-            use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "nome": st.column_config.TextColumn("🐕 Nome Cane", width="medium"),
-                "cibo": st.column_config.TextColumn("🍖 CIBO", width="medium"),
-                "guinzaglieria": st.column_config.TextColumn("🦴 GUINZAGLIERIA", width="medium"),
-                "strumenti": st.column_config.TextColumn("🔧 STRUMENTI", width="medium"),
-                "attivita": st.column_config.TextColumn("🎾 ATTIVITÀ", width="medium"),
-                "note": st.column_config.TextColumn("📝 NOTE", width="large"),
-                "tempo": st.column_config.TextColumn("⏱️ TEMPO", width="small"),
-            }
-        )
+        st.dataframe(df_db, use_container_width=True, hide_index=True)
     else:
         st.info("Nessun dato in anagrafica. Carica i PDF dalla sidebar.")
     
