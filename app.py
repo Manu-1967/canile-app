@@ -24,41 +24,40 @@ def init_db():
     conn.close()
 
 def parse_dog_pdf(uploaded_file):
-    """
-    Estrae i dati dal PDF cercando i titoli in MAIUSCOLO (es. CIBO, NOTE).
-    Cattura il testo tra un titolo e l'altro.
-    """
     reader = PyPDF2.PdfReader(uploaded_file)
-    full_text = ""
+    text = ""
+
     for page in reader.pages:
-        full_text += page.extract_text() + "\n"
+        text += page.extract_text() + "\n"
 
-    # Titoli come richiesto
-    headers = ["CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
-    
-    # Nome del cane dal file
-    nome_cane = uploaded_file.name.replace(".pdf", "").replace(".PDF", "").strip()
-    dati_estratti = {"nome": nome_cane}
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    for i, header in enumerate(headers):
-        if i < len(headers) - 1:
-            next_header = headers[i+1]
-            pattern = f"{header}(.*?){next_header}"
-        else:
-            pattern = f"{header}(.*)$"
-            
-        match = re.search(pattern, full_text, re.DOTALL)
-        
-        if match:
-            # Pulizia testo: rimuove ritorni a capo e spazi extra
-            testo = match.group(1).strip()
-            # Rimuoviamo eventuali accenti per compatibilità nomi colonne
-            key = header.lower().replace("à", "a")
-            dati_estratti[key] = testo
-        else:
-            dati_estratti[header.lower().replace("à", "a")] = "Dato non trovato"
-            
-    return dati_estratti
+    dati = {
+        "nome": uploaded_file.name.replace(".pdf", "").upper(),
+        "cibo": "",
+        "guinzaglieria": "",
+        "strumenti": "",
+        "attivita": "",
+        "note": "",
+        "tempo": ""
+    }
+
+    for line in lines:
+        u = line.upper()
+        if u.startswith("CIBO"):
+            dati["cibo"] = line.replace("CIBO", "").strip()
+        elif u.startswith("GUINZAGLIERIA"):
+            dati["guinzaglieria"] = line.replace("GUINZAGLIERIA", "").strip()
+        elif u.startswith("STRUMENTI"):
+            dati["strumenti"] = line.replace("STRUMENTI", "").strip()
+        elif u.startswith("ATTIV"):
+            dati["attivita"] = line.split(" ", 1)[1].strip()
+        elif u.startswith("NOTE"):
+            dati["note"] = line.replace("NOTE", "").strip()
+        elif u.startswith("TEMPO"):
+            dati["tempo"] = line.replace("TEMPO", "").strip()
+
+    return dati
 
 def salva_anagrafica_db(dati):
     """Salva o aggiorna i dati del cane."""
