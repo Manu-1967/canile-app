@@ -542,90 +542,63 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
-    # 1. Inizializzazione per prevenire NameError
-    df_storico = pd.DataFrame()
+    # Inizializziamo sempre df_filtered per evitare NameError
+    df_filtered = pd.DataFrame()
     
     conn = sqlite3.connect('canile.db')
     try:
-        # Caricamento dati
-        df_raw = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC, inizio ASC", conn)
+        # Carichiamo i dati
+        df_raw = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC", conn)
         
         if not df_raw.empty:
-            df_storico = df_raw.copy()
+            # --- TRATTAMENTO D'URTO ---
+            # 1. Forza tutto il dataframe a essere composto SOLO da stringhe
+            # Questo elimina conflitti tra NaN, None, float e int
+            df_storico_clean = df_raw.astype(str).replace(['None', 'nan', 'NaT'], '')
 
-            # --- TRATTAMENTO DATI "ZERO CRASH" ---
-            # Trasformiamo TUTTO in stringa per evitare incompatibilità di schema
-            for col in df_storico.columns:
-                df_storico[col] = df_storico[col].astype(str).replace(['None', 'nan', 'NaT', 'NoneType'], '')
-
-            # Se vuoi che la data sia cliccabile col calendario, deve essere un oggetto date.
-            # Altrimenti, lasciala come stringa (TextColumn) per massima stabilità.
-            df_storico['data_dt'] = pd.to_datetime(df_storico['data'], errors='coerce').dt.date
-            
             # --- FILTRI ---
-            col_f1, col_f2 = st.columns(2)
-            search_c = col_f1.text_input("Filtra Cane", key="filter_c")
-            search_v = col_f2.text_input("Filtra Volontario", key="filter_v")
+            col1, col2 = st.columns(2)
+            cerca_cane = col1.text_input("Filtra Cane", key="f_cane")
+            cerca_vol = col2.text_input("Filtra Volontario", key="f_vol")
 
-            df_filtered = df_storico.copy()
-            if search_c:
-                df_filtered = df_filtered[df_filtered['cane'].str.contains(search_c, case=False)]
-            if search_v:
-                df_filtered = df_filtered[df_filtered['volontario'].str.contains(search_v, case=False)]
+            df_filtered = df_storico_clean.copy()
+            if cerca_cane:
+                df_filtered = df_filtered[df_filtered['cane'].str.contains(cerca_cane, case=False)]
+            if cerca_vol:
+                df_filtered = df_filtered[df_filtered['volontario'].str.contains(cerca_vol, case=False)]
 
-            # --- CONFIGURAZIONE COLONNE (Usiamo TextColumn per sicurezza) ---
-            config_blindata = {
-                "id": None,
-                "data": st.column_config.TextColumn("Data (AAAA-MM-GG)"), 
-                "data_dt": None, # Nascondiamo la colonna di supporto
-                "inizio": st.column_config.TextColumn("Inizio"),
-                "fine": st.column_config.TextColumn("Fine"),
-                "cane": st.column_config.TextColumn("Cane"),
-                "volontario": st.column_config.TextColumn("Volontario"),
-                "luogo": st.column_config.TextColumn("Luogo"),
-                "attivita": st.column_config.TextColumn("Attività"),
-                "durata_minuti": st.column_config.TextColumn("Minuti"),
-                "timestamp_salvataggio": None # Nascondiamo per pulizia
-            }
-
+            # --- IL DATA EDITOR (VERSIONE MINIMALE) ---
             if st.session_state.get('show_edit_storico', False):
-                st.info("📝 Modifica i valori nelle celle e premi Salva.")
+                st.info("📝 Modifica i testi e premi 'Salva'")
                 
-                # Il data_editor ora riceve solo stringhe, non può crashare per tipi errati
+                # Riduciamo la configurazione all'osso: se crasha qui, è un problema di colonne extra
+                # Definiamo esplicitamente quali colonne vogliamo mostrare
+                colonne_da_mostrare = ['data', 'inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita', 'durata_minuti']
+                df_to_edit = df_filtered[colonne_da_mostrare]
+
                 edited_df = st.data_editor(
-                    df_filtered,
+                    df_to_edit,
                     use_container_width=True,
                     hide_index=True,
-                    column_config=config_blindata,
-                    key="editor_v6_ultra_stable"
+                    key="editor_v7_final"
                 )
                 
-                c1, c2 = st.columns(2)
-                if c1.button("💾 Salva Modifiche", type="primary"):
-                    # Qui aggiungeremo la logica SQL UPDATE se questo non crasha
-                    st.success("Modifiche accettate dal sistema!")
+                c_save, c_ann = st.columns(2)
+                if c_save.button("💾 Salva modifiche", type="primary"):
+                    st.success("Modifiche validate!")
                     st.session_state.show_edit_storico = False
                     st.rerun()
-                if c2.button("❌ Annulla"):
+                if c_ann.button("Annulla"):
                     st.session_state.show_edit_storico = False
                     st.rerun()
             else:
-                st.dataframe(df_filtered, use_container_width=True, hide_index=True, column_config=config_blindata)
-                if st.button("✏️ Modifica Dati"):
+                st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+                if st.button("✏️ Modifica Storico"):
                     st.session_state.show_edit_storico = True
                     st.rerun()
 
-            # --- STATISTICHE ---
-            st.divider()
-            st.write("### 📈 Riepilogo")
-            # Usiamo df_filtered per statistiche dinamiche
-            cols = st.columns(3)
-            cols[0].metric("Turni", len(df_filtered))
-            cols[1].metric("Cani", df_filtered['cane'].nunique())
-            cols[2].metric("Volontari", df_filtered['volontario'].nunique())
-
         else:
-            st.info("Database 'canile.db' vuoto.")
+            st.info("Nessun dato presente in canile.db")
 
     except Exception as e:
         st.error(f"Errore: {e}")
