@@ -544,18 +544,23 @@ with tab_storico:
     
     conn = sqlite3.connect('canile.db')
     try:
-        # 1. Caricamento dati
+        # 1. Caricamento dati grezzi
         df_storico = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC, inizio ASC", conn)
         
         if not df_storico.empty:
-            # --- PREPARAZIONE DATI (Essenziale per evitare l'errore) ---
-            # Convertiamo la colonna data in oggetti date reali
+            # --- PULIZIA DATI "BLINDATA" PER DATA_EDITOR ---
+            
+            # Convertiamo la colonna data: prima in datetime e poi forzatamente in date
             df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce').dt.date
-            # Rimuoviamo righe con date non valide (mandano in crash il data_editor)
-            df_storico = df_storico.dropna(subset=['data'])
-            # Convertiamo la durata in intero
-            if 'durata_minuti' in df_storico.columns:
-                df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30).astype(int)
+            
+            # Assicuriamoci che durata_minuti sia un intero puro (non float con .0)
+            df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30).astype(int)
+            
+            # Riempiamo i valori nulli nelle stringhe per evitare errori di tipo
+            string_cols = ['inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita']
+            for col in string_cols:
+                if col in df_storico.columns:
+                    df_storico[col] = df_storico[col].astype(str).replace('None', '-').replace('nan', '-')
 
             # --- FILTRI ---
             st.write("### 🔍 Filtri di Ricerca")
@@ -569,43 +574,50 @@ with tab_storico:
             if search_vol:
                 df_filtered = df_filtered[df_filtered['volontario'].str.contains(search_vol, case=False)]
 
-            # --- VISUALIZZAZIONE / MODIFICA ---
+            # --- CONFIGURAZIONE COLONNE ---
+            # Nota: Usiamo TextColumn per tutto ciò che non è strettamente una data o un numero
             config_colonne = {
-                "id": None, # Nascondiamo l'ID se presente
-                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", required=True),
+                "id": None,
+                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                 "inizio": st.column_config.TextColumn("Inizio"),
                 "fine": st.column_config.TextColumn("Fine"),
                 "cane": st.column_config.TextColumn("Cane"),
                 "volontario": st.column_config.TextColumn("Volontario"),
                 "luogo": st.column_config.TextColumn("Luogo"),
                 "attivita": st.column_config.TextColumn("Attività"),
-                "durata_minuti": st.column_config.NumberColumn("Durata (min)"),
-                "timestamp_salvataggio": st.column_config.TextColumn("Salvato il")
+                "durata_minuti": st.column_config.NumberColumn("Minuti"),
+                "timestamp_salvataggio": st.column_config.TextColumn("Timestamp")
             }
 
+            # --- MODALITÀ MODIFICA VS VISUALIZZAZIONE ---
             if st.session_state.get('show_edit_storico', False):
                 st.warning("⚠️ Modalità modifica attiva")
-                edited_df = st.data_editor(
-                    df_filtered,
-                    use_container_width=True,
-                    hide_index=True,
-                    num_rows="dynamic",
-                    column_config=config_colonne,
-                    key="editor_storico"
-                )
                 
-                col_save, col_cancel = st.columns(2)
-                with col_save:
-                    if st.button("💾 Salva modifiche", type="primary"):
-                        # Qui dovresti implementare la logica per riscrivere il DB
-                        # Per ora lo salviamo in sessione per non perdere il lavoro
-                        st.success("Modifiche validate correttamente!")
-                        st.session_state.show_edit_storico = False
-                        st.rerun()
-                with col_cancel:
-                    if st.button("❌ Annulla"):
-                        st.session_state.show_edit_storico = False
-                        st.rerun()
+                # Usiamo un try-except specifico per il widget per diagnosticare eventuali incompatibilità residue
+                try:
+                    edited_df = st.data_editor(
+                        df_filtered,
+                        use_container_width=True,
+                        hide_index=True,
+                        num_rows="dynamic",
+                        column_config=config_colonne,
+                        key="editor_storico_v4"
+                    )
+                    
+                    col_save, col_cancel = st.columns(2)
+                    with col_save:
+                        if st.button("💾 Salva modifiche", type="primary"):
+                            # Per salvare davvero nel DB servirebbe una logica di UPDATE/DELETE
+                            st.success("Modifiche validate! (Logica di salvataggio DB da implementare)")
+                            st.session_state.show_edit_storico = False
+                            st.rerun()
+                    with col_cancel:
+                        if st.button("❌ Annulla"):
+                            st.session_state.show_edit_storico = False
+                            st.rerun()
+                except Exception as e_widget:
+                    st.error("Errore critico nel widget di modifica. Probabile formato dati non supportato.")
+                    st.info(f"Dettaglio tecnico: {e_widget}")
             else:
                 st.dataframe(df_filtered, use_container_width=True, hide_index=True, column_config=config_colonne)
 
@@ -621,7 +633,7 @@ with tab_storico:
             st.info("Storico vuoto.")
 
     except Exception as e:
-        st.error(f"Errore durante il caricamento: {e}")
+        st.error(f"Errore generale: {e}")
     finally:
         conn.close()
     
