@@ -8,6 +8,7 @@ import io
 
 """
 PROGRAMMA CANILE 
+"""
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Canile Soft v3", layout="centered")
@@ -85,8 +86,10 @@ def get_campi_adiacenti(campo, df_luoghi):
 
 def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_cani, df_luoghi):
     """
-    Verifica se un campo è valido per un cane con reattività > 5.
-    Restituisce True se il campo è OK, False se ci sono conflitti.
+    Verifica se un campo è valido per un cane considerando la reattività.
+    CONTROLLO BIDIREZIONALE:
+    - Se il cane DA ASSEGNARE ha reattività > 5, verifica che nei campi adiacenti non ci siano altri cani
+    - Se nei campi adiacenti ci sono CANI CON REATTIVITÀ > 5, il campo non è valido
     
     Args:
         cane: nome del cane da verificare
@@ -99,21 +102,25 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
     Returns:
         True se il campo è valido, False se ci sono conflitti di reattività
     """
-    reattivita = get_reattivita_cane(cane, df_cani)
-    
-    # Se reattività <= 5, nessun problema
-    if reattivita <= 5:
-        return True
-    
-    # Se reattività > 5, controllo campi adiacenti (dal foglio Google)
+    reattivita_cane_corrente = get_reattivita_cane(cane, df_cani)
     campi_adiacenti = get_campi_adiacenti(campo, df_luoghi)
     
-    # Verifico se nei campi adiacenti c'è già un cane allo stesso orario
+    # Verifico i cani già presenti nei campi adiacenti allo stesso orario
     for turno in turni_attuali:
         if turno["Orario"] == ora_attuale_str:
             if turno["Luogo"] in campi_adiacenti:
-                # C'è un altro cane in un campo adiacente nello stesso orario
-                return False
+                # C'è un cane in un campo adiacente
+                cane_adiacente = turno["Cane"]
+                
+                # Ignoro i turni speciali (Briefing, Pasti)
+                if cane_adiacente in ["TUTTI", "Da assegnare"]:
+                    continue
+                
+                reattivita_cane_adiacente = get_reattivita_cane(cane_adiacente, df_cani)
+                
+                # CONFLITTO se ALMENO UNO dei due ha reattività > 5
+                if reattivita_cane_corrente > 5 or reattivita_cane_adiacente > 5:
+                    return False
     
     return True
 
@@ -176,19 +183,35 @@ with tab_prog:
                             if v_scelto in vols_occupati:
                                 conflitti_volontari.append(v_scelto)
                 
-                # CONTROLLO 2: Reattività cane in campo adiacente
+                # CONTROLLO 2: Reattività cane in campo adiacente (controllo bidirezionale)
                 reattivita_cane = get_reattivita_cane(m_cane, df_c)
                 conflitto_reattivita = False
-                if reattivita_cane > 5 and m_luo != "-":
-                    if not campo_valido_per_reattivita(m_cane, m_luo, st.session_state.programma, ora_str, df_c, df_l):
-                        conflitto_reattivita = True
+                cani_problematici = []
+                
+                if m_luo != "-":
+                    campi_adi = get_campi_adiacenti(m_luo, df_l)
+                    
+                    # Verifico se ci sono conflitti con cani già assegnati
+                    for turno in st.session_state.programma:
+                        if turno["Orario"] == ora_str and turno["Luogo"] in campi_adi:
+                            cane_adiacente = turno["Cane"]
+                            if cane_adiacente not in ["TUTTI", "Da assegnare"]:
+                                reatt_adia = get_reattivita_cane(cane_adiacente, df_c)
+                                
+                                # Conflitto se ALMENO UNO dei due ha reattività > 5
+                                if reattivita_cane > 5 or reatt_adia > 5:
+                                    conflitto_reattivita = True
+                                    cani_problematici.append(f"{cane_adiacente} (reattività {reatt_adia:.0f}) in {turno['Luogo']}")
                 
                 # GESTIONE ERRORI
                 if conflitti_volontari:
                     st.error(f"⚠️ Attenzione! I seguenti volontari sono già occupati alle {ora_str}: {', '.join(conflitti_volontari)}")
                 elif conflitto_reattivita:
-                    campi_adi = get_campi_adiacenti(m_luo, df_l)
-                    st.error(f"⚠️ REATTIVITÀ! {m_cane} ha reattività > 5 ({reattivita_cane:.0f}) e ci sono già cani in campi adiacenti a '{m_luo}' alle {ora_str}. Campi adiacenti: {', '.join(campi_adi)}. Scegli un altro campo o orario.")
+                    st.error(f"⚠️ CONFLITTO REATTIVITÀ alle {ora_str}!\n\n"
+                            f"**{m_cane}** (reattività {reattivita_cane:.0f}) non può essere assegnato a '{m_luo}' perché:\n\n"
+                            f"Cani adiacenti con reattività alta:\n" + 
+                            "\n".join([f"- {c}" for c in cani_problematici]) + 
+                            f"\n\n**Regola:** Se ALMENO UN cane ha reattività > 5, non possono essere in campi adiacenti.")
                 else:
                     st.session_state.programma.append({
                         "Orario": ora_str,
@@ -201,7 +224,7 @@ with tab_prog:
                     st.success(f"✅ Turno delle {ora_str} aggiunto!")
                     st.rerun()
 
-    # 2. GENERAZIONE AUTOMATICA (Con controllo reattività integrato)
+    # 2. GENERAZIONE AUTOMATICA (Con controllo reattività integrato - FIX CRITICO)
     c_btn1, c_btn2 = st.columns(2)
     
     if c_btn1.button("🤖 Genera/Completa Automatico", use_container_width=True):
@@ -237,7 +260,7 @@ with tab_prog:
         else:
              luoghi_auto_ok = l_p.copy()
 
-        # 5. ALGORITMO PRINCIPALE CON CONTROLLO REATTIVITÀ
+        # 5. ALGORITMO PRINCIPALE CON CONTROLLO REATTIVITÀ - FIX CRITICO
         while cani_da_fare and curr_t < pasti_dt and luoghi_auto_ok:
             ora_attuale_str = curr_t.strftime('%H:%M')
             
@@ -257,9 +280,9 @@ with tab_prog:
             n_cani = min(len(cani_da_fare), len(campi_disponibili))
             
             if n_cani > 0 and vols_liberi:
-                batch = []
+                # --- ASSEGNAZIONE CANI UNO ALLA VOLTA (FIX CRITICO) ---
+                cani_assegnati_questa_fascia = 0
                 
-                # --- ASSEGNAZIONE CANI A CAMPI CON CONTROLLO REATTIVITÀ ---
                 for _ in range(n_cani):
                     if not cani_da_fare or not vols_liberi or not campi_disponibili: 
                         break
@@ -274,7 +297,8 @@ with tab_prog:
                         # Cerco un campo disponibile che rispetti la reattività
                         campo_trovato = None
                         for campo in campi_disponibili:
-                            # Verifico tutti i turni già schedulati (automatici + manuali)
+                            # *** FIX CRITICO: Verifico contro TUTTI i turni già in programma ***
+                            # Questo include i cani già assegnati in questa fascia oraria!
                             tutti_turni = st.session_state.programma + manuali_esistenti
                             
                             # *** CONTROLLO REATTIVITÀ ***
@@ -288,6 +312,32 @@ with tab_prog:
                             campo = campo_trovato
                             campi_disponibili.remove(campo)
                             cane_assegnato = True
+                            
+                            # --- ASSEGNAZIONE VOLONTARIO LEAD (priorità storica) ---
+                            vols_punteggio = []
+                            for v in vols_liberi:
+                                cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
+                                vols_punteggio.append((v, cnt))
+                            vols_punteggio.sort(key=lambda x: x[1], reverse=True)
+                            
+                            lead = vols_punteggio[0][0]
+                            vols_liberi.remove(lead)  # Rimuovo il lead per non riusarlo
+                            
+                            # *** FIX CRITICO: AGGIUNGO IL TURNO IMMEDIATAMENTE ***
+                            # In questo modo il prossimo cane vedrà questo cane quando fa il controllo!
+                            info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (cane.capitalize(),)).fetchone()
+                            st.session_state.programma.append({
+                                "Orario": ora_attuale_str, 
+                                "Cane": cane, 
+                                "Volontario": lead,  # Per ora solo il lead, supporti dopo
+                                "Luogo": campo, 
+                                "Note": info['note'] if info else "-", 
+                                "Inizio_Sort": ora_attuale_str, 
+                                "Attività": "Automatico"
+                            })
+                            
+                            cani_assegnati_questa_fascia += 1
+                            
                         else:
                             # Questo cane non può essere assegnato ora per vincoli di reattività
                             # Provo con il prossimo cane
@@ -297,44 +347,20 @@ with tab_prog:
                         # Nessun cane può essere assegnato in questa fascia oraria
                         # (tutti hanno vincoli di reattività)
                         break
-                    
-                    # --- ASSEGNAZIONE VOLONTARIO LEAD (priorità storica) ---
-                    vols_punteggio = []
-                    for v in vols_liberi:
-                        cnt = conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]
-                        vols_punteggio.append((v, cnt))
-                    vols_punteggio.sort(key=lambda x: x[1], reverse=True)
-                    
-                    lead = vols_punteggio[0][0]
-                    vols_liberi.remove(lead)  # Rimuovo il lead per non riusarlo
-                    
-                    batch.append({
-                        "cane": cane, 
-                        "campo": campo, 
-                        "lead": lead, 
-                        "sups": []
-                    })
-
-                # --- ASSEGNAZIONE SUPPORTI ---
-                if vols_liberi and batch:
-                    idx = 0
-                    while vols_liberi:
-                        batch[idx % len(batch)]["sups"].append(vols_liberi.pop(0))
-                        idx += 1
                 
-                # --- CREAZIONE TURNI ---
-                for b in batch:
-                    v_str = b["lead"] + (f" + {', '.join(b['sups'])}" if b["sups"] else "")
-                    info = conn.execute("SELECT note FROM anagrafica_cani WHERE nome=?", (b["cane"].capitalize(),)).fetchone()
-                    st.session_state.programma.append({
-                        "Orario": ora_attuale_str, 
-                        "Cane": b["cane"], 
-                        "Volontario": v_str, 
-                        "Luogo": b["campo"], 
-                        "Note": info['note'] if info else "-", 
-                        "Inizio_Sort": ora_attuale_str, 
-                        "Attività": "Automatico"
-                    })
+                # --- ASSEGNAZIONE SUPPORTI AI TURNI GIÀ CREATI ---
+                # Prendo gli ultimi N turni creati in questa fascia oraria
+                if vols_liberi and cani_assegnati_questa_fascia > 0:
+                    turni_questa_fascia = [t for t in st.session_state.programma 
+                                          if t["Orario"] == ora_attuale_str and t.get("Attività") == "Automatico"]
+                    
+                    idx = 0
+                    while vols_liberi and turni_questa_fascia:
+                        turno = turni_questa_fascia[idx % len(turni_questa_fascia)]
+                        vol_supporto = vols_liberi.pop(0)
+                        # Aggiungo il supporto al volontario esistente
+                        turno["Volontario"] += f" + {vol_supporto}"
+                        idx += 1
             
             # Prossima fascia oraria
             curr_t += timedelta(minutes=45)
