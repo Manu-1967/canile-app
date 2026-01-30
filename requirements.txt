@@ -8,3 +8,4 @@ streamlit
 openpyxl
 fpdf
 xlsxwriter
+reportlab
