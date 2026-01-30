@@ -175,15 +175,19 @@ init_db()
 if 'programma' not in st.session_state: st.session_state.programma = []
 
 # --- INTERFACCIA ---
-st.title("🐾 Programma Canile - Gestione Dinamica")
+st.title("🐾 Programma Canile 🐕")
 
 with st.sidebar:
     st.header("⚙️ Configurazione")
     data_t = st.date_input("Data Turno", datetime.today())
-    ora_i = st.time_input("Ora Inizio", datetime.strptime("08:00", "%H:%M"))
-    ora_f = st.time_input("Ora Fine", datetime.strptime("12:00", "%H:%M"))
+    ora_i = st.time_input("Ora Inizio", datetime.strptime("14:00", "%H:%M"))
+    ora_f = st.time_input("Ora Fine", datetime.strptime("18:00", "%H:%M"))
     st.divider()
-    
+
+with st.sidebar:
+    st.markdown("### 📋 Stato anagrafica cani")
+    st.dataframe(carica_anagrafica())
+
 with st.sidebar:
     st.subheader("📂 Importazione PDF")
 
