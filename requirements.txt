@@ -9,3 +9,4 @@ openpyxl
 fpdf
 xlsxwriter
 reportlab
+plotty
