@@ -284,22 +284,44 @@ with tab_ana:
     # else:
       #   st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
 
-    st.header("Carica anagrafica cane")
+    st.header("Caricamento anagrafiche cani")
 
-    pdf_file = st.file_uploader("Carica PDF cane", type="pdf")
+    pdf_files = st.file_uploader(
+        "Carica uno o più PDF anagrafica",
+        type="pdf",
+        accept_multiple_files=True
+)
 
-    if pdf_file:
-        dati = parse_dog_pdf(pdf_file)
-        salva_anagrafica(dati)
+if pdf_files:
+    successi = 0
 
-        st.success(f"Anagrafica {dati['nome']} caricata correttamente")
+    for pdf in pdf_files:
+        try:
+            dati = parse_dog_pdf(pdf)
+            salva_anagrafica(dati)
+            successi += 1
+        except Exception as e:
+            st.error(f"Errore con {pdf.name}: {e}")
 
-        if st.button("Genera programma volontari"):
-            excel = genera_excel_volontari()
-            pdf = genera_pdf_volontari()
+    st.success(f"{successi} anagrafiche caricate correttamente 🐕")
 
-            st.download_button("Scarica Excel", open(excel, "rb"), file_name=excel)
-            st.download_button("Scarica PDF", open(pdf, "rb"), file_name=pdf)
+    
+    # st.header("Carica anagrafica cane")
+
+    # pdf_file = st.file_uploader("Carica PDF cane", type="pdf")
+
+    # if pdf_file:
+        # dati = parse_dog_pdf(pdf_file)
+        # salva_anagrafica(dati)
+
+        # st.success(f"Anagrafica {dati['nome']} caricata correttamente")
+
+        # if st.button("Genera programma volontari"):
+         # excel = genera_excel_volontari()
+         # pdf = genera_pdf_volontari()
+
+            # st.download_button("Scarica Excel", open(excel, "rb"), file_name=excel)
+            # st.download_button("Scarica PDF", open(pdf, "rb"), file_name=pdf)
 
 
 with tab_stats:
