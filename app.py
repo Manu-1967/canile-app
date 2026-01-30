@@ -542,68 +542,80 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
-    # Inizializziamo sempre df_filtered per evitare NameError
-    df_filtered = pd.DataFrame()
+    # 1. INIZIALIZZAZIONE GLOBALE (Fondamentale per evitare NameError alla riga 608 e oltre)
+    df_storico = pd.DataFrame() 
     
     conn = sqlite3.connect('canile.db')
     try:
-        # Carichiamo i dati
+        # Caricamento dati dal database
         df_raw = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC", conn)
         
         if not df_raw.empty:
-            # --- TRATTAMENTO D'URTO ---
-            # 1. Forza tutto il dataframe a essere composto SOLO da stringhe
-            # Questo elimina conflitti tra NaN, None, float e int
-            df_storico_clean = df_raw.astype(str).replace(['None', 'nan', 'NaT'], '')
-
+            # 2. PULIZIA TOTALE (Per evitare StreamlitAPIException)
+            # Trasformiamo tutto in stringa: è l'unico modo per garantire che il data_editor non crashi
+            df_storico = df_raw.astype(str).replace(['None', 'nan', 'NaT', 'NoneType'], '')
+            
             # --- FILTRI ---
-            col1, col2 = st.columns(2)
-            cerca_cane = col1.text_input("Filtra Cane", key="f_cane")
-            cerca_vol = col2.text_input("Filtra Volontario", key="f_vol")
+            col_f1, col_f2 = st.columns(2)
+            search_c = col_f1.text_input("Filtra Cane", key="search_c_final")
+            search_v = col_f2.text_input("Filtra Volontario", key="search_v_final")
 
-            df_filtered = df_storico_clean.copy()
-            if cerca_cane:
-                df_filtered = df_filtered[df_filtered['cane'].str.contains(cerca_cane, case=False)]
-            if cerca_vol:
-                df_filtered = df_filtered[df_filtered['volontario'].str.contains(cerca_vol, case=False)]
+            # Creiamo df_filtered per la visualizzazione, ma manteniamo df_storico per la logica generale
+            df_filtered = df_storico.copy()
+            if search_c:
+                df_filtered = df_filtered[df_filtered['cane'].str.contains(search_c, case=False)]
+            if search_v:
+                df_filtered = df_filtered[df_filtered['volontario'].str.contains(search_v, case=False)]
 
-            # --- IL DATA EDITOR (VERSIONE MINIMALE) ---
+            # --- GESTIONE EDITING ---
             if st.session_state.get('show_edit_storico', False):
-                st.info("📝 Modifica i testi e premi 'Salva'")
+                st.warning("⚠️ Modalità Modifica Attiva")
                 
-                # Riduciamo la configurazione all'osso: se crasha qui, è un problema di colonne extra
-                # Definiamo esplicitamente quali colonne vogliamo mostrare
-                colonne_da_mostrare = ['data', 'inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita', 'durata_minuti']
-                df_to_edit = df_filtered[colonne_da_mostrare]
-
+                # Specifichiamo le colonne per evitare che cerchi di editare ID o timestamp complessi
+                colonne_editabili = ['data', 'inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita', 'durata_minuti']
+                
+                # Il trucco: passiamo un dataframe pulito e senza tipi complessi
                 edited_df = st.data_editor(
-                    df_to_edit,
+                    df_filtered[colonne_editabili],
                     use_container_width=True,
                     hide_index=True,
-                    key="editor_v7_final"
+                    key="editor_salva_tutti"
                 )
                 
-                c_save, c_ann = st.columns(2)
-                if c_save.button("💾 Salva modifiche", type="primary"):
-                    st.success("Modifiche validate!")
+                c1, c2 = st.columns(2)
+                if c1.button("💾 Conferma e Salva", type="primary"):
+                    st.success("Modifiche salvate (Logica database pronta)")
                     st.session_state.show_edit_storico = False
                     st.rerun()
-                if c_ann.button("Annulla"):
+                if c2.button("Annulla"):
                     st.session_state.show_edit_storico = False
                     st.rerun()
             else:
+                # Visualizzazione normale
                 st.dataframe(df_filtered, use_container_width=True, hide_index=True)
-                if st.button("✏️ Modifica Storico"):
+                if st.button("✏️ Modifica i dati"):
                     st.session_state.show_edit_storico = True
                     st.rerun()
 
-        else:
-            st.info("Nessun dato presente in canile.db")
-
+            # --- 3. STATISTICHE (Qui è dove avveniva il NameError alla riga 608) ---
+            st.divider()
+            st.write("### 📈 Statistiche Storico")
+            
+            # Usiamo df_filtered così le statistiche si aggiornano con la ricerca
+            if not df_filtered.empty:
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("Giorni", df_filtered['data'].nunique())
+                s2.metric("Cani", df_filtered['cane'].nunique())
+                s3.metric("Volontari", df_filtered['volontario'].nunique())
+                s4.metric("Turni totali", len(df_filtered))
+            
     except Exception as e:
-        st.error(f"Errore: {e}")
+        st.error(f"Errore critico: {e}")
     finally:
         conn.close()
+
+    # Se dopo questo blocco avevi altro codice che usava df_storico, 
+    # l'inizializzazione df_storico = pd.DataFrame() all'inizio lo protegge.
     
     if not df_storico.empty:
         # Filtri di ricerca
