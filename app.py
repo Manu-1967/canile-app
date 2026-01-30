@@ -542,10 +542,14 @@ with tab_storico:
             st.info(f"📊 Visualizzati **{len(df_filtrato)}** turni su **{len(df_storico_completo)}** totali")
             
             if not df_filtrato.empty:
+                # Converto la colonna data da stringa a datetime per compatibilità con DateColumn
+                df_filtrato_edit = df_filtrato[['rowid', 'data', 'inizio', 'cane', 'volontario', 'luogo']].copy()
+                df_filtrato_edit['data'] = pd.to_datetime(df_filtrato_edit['data'], errors='coerce')
+                
                 # Editor per modificare lo storico
                 st.write("#### ✏️ Modifica Turni")
                 df_edited = st.data_editor(
-                    df_filtrato[['rowid', 'data', 'inizio', 'cane', 'volontario', 'luogo']],
+                    df_filtrato_edit,
                     use_container_width=True,
                     hide_index=True,
                     num_rows="dynamic",
@@ -567,9 +571,11 @@ with tab_storico:
                         try:
                             # Aggiorno tutti i record modificati
                             for _, row in df_edited.iterrows():
+                                # Converto la data da datetime a stringa formato YYYY-MM-DD
+                                data_str = row['data'].strftime('%Y-%m-%d') if pd.notna(row['data']) else row['data']
                                 conn.execute(
                                     "UPDATE storico SET data=?, inizio=?, cane=?, volontario=?, luogo=? WHERE rowid=?",
-                                    (row['data'], row['inizio'], row['cane'], row['volontario'], row['luogo'], row['rowid'])
+                                    (data_str, row['inizio'], row['cane'], row['volontario'], row['luogo'], row['rowid'])
                                 )
                             conn.commit()
                             st.success("✅ Modifiche salvate con successo!")
@@ -724,8 +730,8 @@ if st.session_state.programma:
                 st.success(f"✅ Salvati {record_salvati} turni nello storico del {data_t.strftime('%d/%m/%Y')}!")
                 st.info("💡 L'algoritmo di assegnazione automatica ora terrà conto di questi turni per dare priorità ai volontari più esperti con ogni cane.")
                 # Opzionalmente: svuoto il programma dopo il salvataggio
-                st.session_state.programma = []
-                st.rerun()
+                # st.session_state.programma = []
+                # st.rerun()
             else:
                 st.warning("⚠️ Nessun turno valido da salvare (solo turni speciali o senza cane).")
 else:
