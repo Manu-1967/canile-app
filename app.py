@@ -190,7 +190,7 @@ with st.sidebar:
         if st.button("Aggiorna Anagrafica da PDF", use_container_width=True):
             for pdf in pdf_files:
                 dati = parse_dog_pdf(pdf)
-                salva_anagrafica_db(dati)
+                salva_anagrafica(dati)
             st.success(f"Aggiornati {len(pdf_files)} cani!")
             st.rerun()
 
