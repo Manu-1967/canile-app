@@ -59,7 +59,7 @@ def parse_dog_pdf(uploaded_file):
 
     return dati
 
-def salva_anagrafica(dati):
+def salva_anagrafica_db(dati):
     conn = sqlite3.connect("canile.db")
     c = conn.cursor()
 
@@ -190,7 +190,7 @@ with st.sidebar:
         if st.button("Aggiorna Anagrafica da PDF", use_container_width=True):
             for pdf in pdf_files:
                 dati = parse_dog_pdf(pdf)
-                salva_anagrafica(dati)
+                salva_anagrafica_db(dati)
             st.success(f"Aggiornati {len(pdf_files)} cani!")
             st.rerun()
 
@@ -298,7 +298,7 @@ if pdf_files:
     for pdf in pdf_files:
         try:
             dati = parse_dog_pdf(pdf)
-            salva_anagrafica(dati)
+            salva_anagrafica_db(dati)
             successi += 1
         except Exception as e:
             st.error(f"Errore con {pdf.name}: {e}")
@@ -312,7 +312,7 @@ if pdf_files:
 
     # if pdf_file:
         # dati = parse_dog_pdf(pdf_file)
-        # salva_anagrafica(dati)
+        # salva_anagrafica_db(dati)
 
         # st.success(f"Anagrafica {dati['nome']} caricata correttamente")
 
