@@ -294,7 +294,7 @@ with tab_prog:
         df_p = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
         st.data_editor(df_p, use_container_width=True, hide_index=True)
 
-with tab_ana:
+# with tab_ana:
     # st.header("📋 Database Anagrafica Cani")
     # conn = sqlite3.connect('canile.db')
     # df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
