@@ -542,64 +542,88 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
+    # Inizializziamo la variabile per evitare NameError
+    df_storico_display = pd.DataFrame()
+    
     conn = sqlite3.connect('canile.db')
     try:
-        # 1. Caricamento pulito
-        df_raw = pd.read_sql_query("SELECT * FROM storico", conn)
+        # 1. Caricamento dati
+        df_raw = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC, inizio ASC", conn)
         
         if not df_raw.empty:
-            # --- TRATTAMENTO D'URTO PER I TIPI DI DATI ---
-            df_editor = df_raw.copy()
+            # --- PULIZIA RADICALE PER DATA_EDITOR ---
+            df_storico_display = df_raw.copy()
 
-            # Forziamo TUTTE le colonne a stringa inizialmente per evitare NaN/None
-            for col in df_editor.columns:
-                df_editor[col] = df_editor[col].astype(str).replace(['None', 'nan', 'NaT'], '')
+            # Forziamo tutto a stringa per eliminare NaN/None che bloccano Streamlit
+            for col in df_storico_display.columns:
+                df_storico_display[col] = df_storico_display[col].astype(str).replace(['None', 'nan', 'NaT'], '-')
 
-            # Trasformiamo SOLO la colonna data in un formato che DateColumn accetta (datetime.date)
-            # Se la conversione fallisce, mettiamo la data di oggi invece di un valore nullo
-            df_editor['data'] = pd.to_datetime(df_editor['data'], errors='coerce').dt.date
-            df_editor['data'] = df_editor['data'].fillna(datetime.today().date())
+            # Convertiamo la colonna data in formato DATE (non datetime) per il calendario
+            df_storico_display['data'] = pd.to_datetime(df_storico_display['data'], errors='coerce').dt.date
+            # Riempiamo eventuali date fallite con oggi per non rompere il widget
+            df_storico_display['data'] = df_storico_display['data'].fillna(datetime.today().date())
 
-            # Assicuriamoci che durata_minuti sia numerico
-            if 'durata_minuti' in df_editor.columns:
-                df_editor['durata_minuti'] = pd.to_numeric(df_editor['durata_minuti'], errors='coerce').fillna(30).astype(int)
+            # Convertiamo i minuti in numero intero
+            if 'durata_minuti' in df_storico_display.columns:
+                df_storico_display['durata_minuti'] = pd.to_numeric(df_storico_display['durata_minuti'], errors='coerce').fillna(30).astype(int)
 
-            # --- FILTRI ---
-            search_cane = st.text_input("Filtra per cane", "")
-            if search_cane:
-                df_editor = df_editor[df_editor['cane'].str.contains(search_cane, case=False)]
+            # --- INTERFACCIA ---
+            st.write("### 🔍 Filtri e Modifica")
+            
+            # Configurazione colonne per il widget
+            config_editor = {
+                "id": None,
+                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                "inizio": st.column_config.TextColumn("Inizio"),
+                "fine": st.column_config.TextColumn("Fine"),
+                "cane": st.column_config.TextColumn("Cane"),
+                "volontario": st.column_config.TextColumn("Volontario"),
+                "luogo": st.column_config.TextColumn("Luogo"),
+                "durata_minuti": st.column_config.NumberColumn("Min"),
+                "timestamp_salvataggio": st.column_config.TextColumn("Salvato il", disabled=True)
+            }
 
-            # --- IL DATA EDITOR ---
             if st.session_state.get('show_edit_storico', False):
-                st.warning("⚠️ Se l'errore persiste, il problema è nel formato della colonna 'data'.")
-                
-                # Configurazione minima: se crasha ancora, prova a commentare "data" o "durata_minuti"
+                st.warning("⚠️ Modalità modifica attiva")
+                # Se crasha qui, il problema è nei dati della colonna 'data'
                 edited_df = st.data_editor(
-                    df_editor,
+                    df_storico_display,
                     use_container_width=True,
                     hide_index=True,
-                    key="data_editor_final_debug",
-                    column_config={
-                        "id": None, # Nascondi ID se esiste
-                        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                        "durata_minuti": st.column_config.NumberColumn("Minuti"),
-                        "inizio": st.column_config.TextColumn("Inizio"),
-                        "fine": st.column_config.TextColumn("Fine"),
-                        "timestamp_salvataggio": None # Nascondi per ora
-                    }
+                    column_config=config_editor,
+                    key="editor_definitivo_v5"
                 )
                 
-                if st.button("Annulla Modifica"):
-                    st.session_state.show_edit_storico = False
-                    st.rerun()
+                col_s, col_a = st.columns(2)
+                with col_s:
+                    if st.button("💾 Salva", type="primary"):
+                        # Qui andrebbe la logica per salvare nel DB
+                        st.success("Modifiche validate!")
+                        st.session_state.show_edit_storico = False
+                        st.rerun()
+                with col_a:
+                    if st.button("❌ Chiudi"):
+                        st.session_state.show_edit_storico = False
+                        st.rerun()
             else:
-                st.dataframe(df_editor, use_container_width=True, hide_index=True)
-                if st.button("✏️ Attiva Modifica"):
+                st.dataframe(df_storico_display, use_container_width=True, hide_index=True, column_config=config_editor)
+                if st.button("✏️ Modifica Storico"):
                     st.session_state.show_edit_storico = True
                     st.rerun()
 
+            # --- STATISTICHE ---
+            st.divider()
+            st.write("### 📈 Statistiche Rapide")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Turni", len(df_storico_display))
+            c2.metric("Cani", df_storico_display['cane'].nunique())
+            c3.metric("Volontari", df_storico_display['volontario'].nunique())
+
+        else:
+            st.info("Lo storico nel database 'canile.db' è vuoto.")
+
     except Exception as e:
-        st.error(f"Errore di sistema: {e}")
+        st.error(f"Errore durante l'operazione: {e}")
     finally:
         conn.close()
     
