@@ -216,8 +216,9 @@ with st.sidebar:
                     dati = parse_dog_pdf(pdf)
                     salva_anagrafica(dati)
                     successi += 1
-                except Exception as e:
-                    errori.append(pdf.name)
+        except Exception as e:
+            st.error(f"Errore in {pdf.name}: {e}")
+
 
             st.success(f"{successi} anagrafiche caricate correttamente 🐕")
 
