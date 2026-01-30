@@ -184,15 +184,36 @@ with st.sidebar:
     ora_f = st.time_input("Ora Fine", datetime.strptime("12:00", "%H:%M"))
     st.divider()
     
-    st.header("📂 Importazione PDF")
-    pdf_files = st.file_uploader("Carica PDF Cani", accept_multiple_files=True, type="pdf")
-    if pdf_files:
-        if st.button("Aggiorna Anagrafica da PDF", use_container_width=True):
+with st.sidebar:
+    st.subheader("📂 Importazione PDF")
+
+    pdf_files = st.file_uploader(
+        "Carica PDF cani",
+        type="pdf",
+        accept_multiple_files=True,
+        key="upload_pdf_cani"
+    )
+
+    if st.button("Aggiorna anagrafica da PDF"):
+        if not pdf_files:
+            st.warning("Carica almeno un PDF")
+        else:
+            successi = 0
+            errori = []
+
             for pdf in pdf_files:
-                dati = parse_dog_pdf(pdf)
-                salva_anagrafica_db(dati)
-            st.success(f"Aggiornati {len(pdf_files)} cani!")
-            st.rerun()
+                try:
+                    dati = parse_dog_pdf(pdf)
+                    salva_anagrafica(dati)
+                    successi += 1
+                except Exception as e:
+                    errori.append(pdf.name)
+
+            st.success(f"{successi} anagrafiche caricate correttamente 🐕")
+
+            if errori:
+                st.error(f"Errore nei file: {', '.join(errori)}")
+
 
 df_c = load_gsheets("Cani")
 df_v = load_gsheets("Volontari")
@@ -284,28 +305,7 @@ with tab_ana:
     # else:
       #   st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
 
-    st.header("Caricamento anagrafiche cani")
-
-    pdf_files = st.file_uploader(
-        "Carica uno o più PDF anagrafica",
-        type="pdf",
-        accept_multiple_files=True
-)
-
-if pdf_files:
-    successi = 0
-
-    for pdf in pdf_files:
-        try:
-            dati = parse_dog_pdf(pdf)
-            salva_anagrafica_db(dati)
-            successi += 1
-        except Exception as e:
-            st.error(f"Errore con {pdf.name}: {e}")
-
-    st.success(f"{successi} anagrafiche caricate correttamente 🐕")
-
-    
+       
     # st.header("Carica anagrafica cane")
 
     # pdf_file = st.file_uploader("Carica PDF cane", type="pdf")
