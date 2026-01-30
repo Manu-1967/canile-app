@@ -352,6 +352,10 @@ def export_programma_pdf(turni_list, data_str, nome_file=None):
     return buffer
 
 def load_gsheets(sheet_name):
+    """
+    Carica i dati da Google Sheets con gestione errori dettagliata.
+    Restituisce: (DataFrame, messaggio_errore)
+    """
     # Link al tuo Google Sheet (assicurati che sia pubblico o accessibile)
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
@@ -372,10 +376,11 @@ def load_gsheets(sheet_name):
         elif sheet_name == "Cani":
             # Converto a numerico, mettendo 0 dove non valido
             df['reattività'] = pd.to_numeric(df['reattività'], errors='coerce').fillna(0)
-            
-        return df.dropna(how='all')
-    except:
-        return pd.DataFrame()
+        
+        df_clean = df.dropna(how='all')
+        return df_clean, None
+    except Exception as e:
+        return pd.DataFrame(), str(e)
 
 def parse_pdf_content(text):
     """
@@ -630,10 +635,51 @@ if 'programma' not in st.session_state:
 # --- INTERFACCIA PRINCIPALE ---
 st.title("🐕 Gestione Programma Canile")
 
+# --- CARICAMENTO DATI DA GOOGLE SHEETS CON DIAGNOSTICA ---
+st.sidebar.header("📊 Stato Caricamento Dati")
+
 # Carico i dati da Google Sheets
-df_cani = load_gsheets("Cani")
-df_volontari = load_gsheets("Volontari")
-df_luoghi = load_gsheets("Luoghi")
+df_cani, err_cani = load_gsheets("Cani")
+df_volontari, err_volontari = load_gsheets("Volontari")
+df_luoghi, err_luoghi = load_gsheets("Luoghi")
+
+# Mostro lo stato del caricamento
+with st.sidebar:
+    if not df_cani.empty:
+        st.success(f"✅ Cani: {len(df_cani)} caricati")
+    else:
+        st.error(f"❌ Cani: Errore caricamento")
+        if err_cani:
+            st.caption(f"Dettagli: {err_cani}")
+    
+    if not df_volontari.empty:
+        st.success(f"✅ Volontari: {len(df_volontari)} caricati")
+    else:
+        st.error(f"❌ Volontari: Errore caricamento")
+        if err_volontari:
+            st.caption(f"Dettagli: {err_volontari}")
+    
+    if not df_luoghi.empty:
+        st.success(f"✅ Luoghi: {len(df_luoghi)} caricati")
+    else:
+        st.error(f"❌ Luoghi: Errore caricamento")
+        if err_luoghi:
+            st.caption(f"Dettagli: {err_luoghi}")
+    
+    # Pulsante di ricaricamento
+    if st.button("🔄 Ricarica Dati", use_container_width=True):
+        st.rerun()
+    
+    st.divider()
+    
+    # Info database
+    st.caption("💾 Database locale: canile.db")
+    conn_check = sqlite3.connect('canile.db')
+    num_storico = pd.read_sql_query("SELECT COUNT(*) as count FROM storico", conn_check).iloc[0]['count']
+    num_anagrafica = pd.read_sql_query("SELECT COUNT(*) as count FROM anagrafica_cani", conn_check).iloc[0]['count']
+    conn_check.close()
+    st.caption(f"📊 Storico turni: {num_storico}")
+    st.caption(f"📋 Anagrafica cani: {num_anagrafica}")
 
 # Carico lo storico per l'assegnazione intelligente
 conn_storico = sqlite3.connect('canile.db')
