@@ -4,9 +4,9 @@ pandas
 pdfplumber
 PyPDF2
 pandas
-streamlit
 openpyxl
 fpdf
 xlsxwriter
 reportlab
 plotly
+matplotlib
