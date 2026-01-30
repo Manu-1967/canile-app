@@ -200,7 +200,7 @@ c_p = st.multiselect("🐕 Cani in turno", df_c['nome'].tolist() if not df_c.emp
 v_p = st.multiselect("👤 Volontari presenti", df_v['nome'].tolist() if not df_v.empty else [])
 l_p = st.multiselect("📍 Luoghi disponibili (Aperti oggi)", df_l['nome'].tolist() if not df_l.empty else [])
 
-tab_prog, tab_ana = st.tabs(["📅 Programma", "📋 Anagrafica"])
+tab_prog, tab_ana, tab_storico = st.tabs(["📅 Programma", "📋 Anagrafica", "📊 Storico & Statistiche"])
 
 with tab_prog:
     # 1. INSERIMENTO MANUALE (Con controllo sovrapposizioni E reattività)
@@ -466,6 +466,245 @@ with tab_ana:
     
     conn.close()
 
+with tab_storico:
+    st.subheader("📊 Gestione Storico Turni")
+    
+    conn = sqlite3.connect('canile.db')
+    
+    # --- SOTTOTAB: VISUALIZZA/MODIFICA/CANCELLA vs STATISTICHE ---
+    subtab_gestione, subtab_stats = st.tabs(["🗂️ Gestione Dati", "📈 Statistiche"])
+    
+    with subtab_gestione:
+        st.write("### 📋 Visualizza e Modifica Storico")
+        
+        # --- INSERIMENTO MANUALE NUOVO TURNO ---
+        with st.expander("➕ Aggiungi Nuovo Turno allo Storico"):
+            col_add1, col_add2 = st.columns(2)
+            
+            with col_add1:
+                new_data = st.date_input("Data Turno", datetime.today(), key="new_turno_data")
+                new_orario = st.time_input("Orario", datetime.strptime("09:00", "%H:%M"), key="new_turno_ora")
+                new_cane = st.text_input("Nome Cane", key="new_turno_cane")
+            
+            with col_add2:
+                new_volontario = st.text_input("Nome Volontario", key="new_turno_vol")
+                new_luogo = st.text_input("Luogo", key="new_turno_luogo")
+            
+            if st.button("💾 Aggiungi allo Storico", use_container_width=True):
+                if new_cane and new_volontario and new_luogo:
+                    try:
+                        conn.execute(
+                            "INSERT INTO storico (data, inizio, cane, volontario, luogo) VALUES (?, ?, ?, ?, ?)",
+                            (new_data.strftime('%Y-%m-%d'), 
+                             new_orario.strftime('%H:%M'), 
+                             new_cane, 
+                             new_volontario, 
+                             new_luogo)
+                        )
+                        conn.commit()
+                        st.success(f"✅ Turno aggiunto: {new_cane} con {new_volontario}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Errore: {str(e)}")
+                else:
+                    st.warning("⚠️ Compila tutti i campi obbligatori")
+        
+        st.divider()
+        
+        # Filtri
+        col_f1, col_f2, col_f3 = st.columns(3)
+        
+        # Carico tutti i dati per i filtri
+        df_storico_completo = pd.read_sql_query("SELECT rowid, * FROM storico ORDER BY data DESC, inizio", conn)
+        
+        if not df_storico_completo.empty:
+            with col_f1:
+                date_uniche = sorted(df_storico_completo['data'].unique(), reverse=True)
+                filtro_data = st.selectbox("Filtra per Data", ["Tutte"] + date_uniche)
+            
+            with col_f2:
+                cani_unici = sorted(df_storico_completo['cane'].unique())
+                filtro_cane = st.selectbox("Filtra per Cane", ["Tutti"] + cani_unici)
+            
+            with col_f3:
+                vol_unici = sorted(df_storico_completo['volontario'].unique())
+                filtro_vol = st.selectbox("Filtra per Volontario", ["Tutti"] + vol_unici)
+            
+            # Applico filtri
+            df_filtrato = df_storico_completo.copy()
+            if filtro_data != "Tutte":
+                df_filtrato = df_filtrato[df_filtrato['data'] == filtro_data]
+            if filtro_cane != "Tutti":
+                df_filtrato = df_filtrato[df_filtrato['cane'] == filtro_cane]
+            if filtro_vol != "Tutti":
+                df_filtrato = df_filtrato[df_filtrato['volontario'] == filtro_vol]
+            
+            st.info(f"📊 Visualizzati **{len(df_filtrato)}** turni su **{len(df_storico_completo)}** totali")
+            
+            if not df_filtrato.empty:
+                # Editor per modificare lo storico
+                st.write("#### ✏️ Modifica Turni")
+                df_edited = st.data_editor(
+                    df_filtrato[['rowid', 'data', 'inizio', 'cane', 'volontario', 'luogo']],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    column_config={
+                        "rowid": st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                        "data": st.column_config.DateColumn("📅 Data", format="DD/MM/YYYY", width="medium"),
+                        "inizio": st.column_config.TextColumn("⏰ Orario", width="small"),
+                        "cane": st.column_config.TextColumn("🐕 Cane", width="medium"),
+                        "volontario": st.column_config.TextColumn("👤 Volontario", width="medium"),
+                        "luogo": st.column_config.TextColumn("📍 Luogo", width="medium"),
+                    },
+                    key="editor_storico"
+                )
+                
+                col_save, col_del = st.columns(2)
+                
+                with col_save:
+                    if st.button("💾 Salva Modifiche", use_container_width=True, type="primary"):
+                        try:
+                            # Aggiorno tutti i record modificati
+                            for _, row in df_edited.iterrows():
+                                conn.execute(
+                                    "UPDATE storico SET data=?, inizio=?, cane=?, volontario=?, luogo=? WHERE rowid=?",
+                                    (row['data'], row['inizio'], row['cane'], row['volontario'], row['luogo'], row['rowid'])
+                                )
+                            conn.commit()
+                            st.success("✅ Modifiche salvate con successo!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Errore nel salvataggio: {str(e)}")
+                
+                with col_del:
+                    if st.button("🗑️ Elimina Turni Selezionati", use_container_width=True):
+                        st.warning("⚠️ Funzione in sviluppo: usa il data editor per eliminare righe (modalità 'dynamic')")
+                
+                st.divider()
+                
+                # Cancellazione rapida per data
+                st.write("#### 🗑️ Cancellazione Rapida")
+                col_del1, col_del2 = st.columns([2, 1])
+                
+                with col_del1:
+                    data_da_cancellare = st.selectbox("Seleziona data da cancellare completamente", 
+                                                      ["---"] + date_uniche,
+                                                      key="del_data")
+                
+                with col_del2:
+                    if st.button("❌ Cancella Giornata", use_container_width=True, disabled=(data_da_cancellare == "---")):
+                        if data_da_cancellare != "---":
+                            count = conn.execute("SELECT COUNT(*) FROM storico WHERE data=?", (data_da_cancellare,)).fetchone()[0]
+                            if st.session_state.get('confirm_delete') == data_da_cancellare:
+                                conn.execute("DELETE FROM storico WHERE data=?", (data_da_cancellare,))
+                                conn.commit()
+                                st.success(f"✅ Cancellati {count} turni del {data_da_cancellare}")
+                                st.session_state.confirm_delete = None
+                                st.rerun()
+                            else:
+                                st.session_state.confirm_delete = data_da_cancellare
+                                st.warning(f"⚠️ Vuoi davvero cancellare {count} turni? Clicca di nuovo per confermare.")
+            else:
+                st.info("Nessun turno trovato con i filtri selezionati.")
+        else:
+            st.info("📭 Nessun dato nello storico. Salva alcuni turni per iniziare!")
+    
+    with subtab_stats:
+        st.write("### 📈 Statistiche Esperienza")
+        
+        df_storico = pd.read_sql_query("SELECT * FROM storico", conn)
+        
+        if not df_storico.empty:
+            # Statistiche per cane
+            st.write("#### 🐕 Esperienza per Cane")
+            
+            cani_disponibili = sorted(df_storico['cane'].unique())
+            cane_selezionato = st.selectbox("Seleziona un cane", cani_disponibili, key="stats_cane")
+            
+            if cane_selezionato:
+                # Statistiche del cane selezionato
+                df_cane = df_storico[df_storico['cane'] == cane_selezionato]
+                
+                # Raggruppo per volontario
+                stats_volontari = df_cane.groupby('volontario').agg({
+                    'data': 'count'
+                }).reset_index()
+                stats_volontari.columns = ['Volontario', 'Turni Totali']
+                stats_volontari = stats_volontari.sort_values('Turni Totali', ascending=False)
+                
+                col_stat1, col_stat2 = st.columns(2)
+                
+                with col_stat1:
+                    st.metric("📊 Turni Totali con questo cane", len(df_cane))
+                    st.metric("👥 Volontari Diversi", len(stats_volontari))
+                
+                with col_stat2:
+                    if len(stats_volontari) > 0:
+                        st.metric("🥇 Volontario più esperto", 
+                                 stats_volontari.iloc[0]['Volontario'],
+                                 f"{stats_volontari.iloc[0]['Turni Totali']} turni")
+                
+                st.divider()
+                st.write("**Classifica Esperienza:**")
+                
+                # Aggiungo una colonna con la percentuale
+                stats_volontari['Percentuale'] = (stats_volontari['Turni Totali'] / len(df_cane) * 100).round(1)
+                
+                st.dataframe(
+                    stats_volontari,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Volontario": st.column_config.TextColumn("👤 Volontario", width="medium"),
+                        "Turni Totali": st.column_config.NumberColumn("📊 Turni", width="small"),
+                        "Percentuale": st.column_config.NumberColumn("📈 %", format="%.1f%%", width="small"),
+                    }
+                )
+                
+                # Grafico a barre
+                st.bar_chart(stats_volontari.set_index('Volontario')['Turni Totali'])
+            
+            st.divider()
+            
+            # Statistiche generali
+            st.write("#### 📊 Statistiche Generali")
+            
+            col_g1, col_g2, col_g3 = st.columns(3)
+            
+            with col_g1:
+                st.metric("🐕 Cani Totali", df_storico['cane'].nunique())
+                st.metric("👥 Volontari Totali", df_storico['volontario'].nunique())
+            
+            with col_g2:
+                st.metric("📅 Giorni con Turni", df_storico['data'].nunique())
+                st.metric("📍 Luoghi Utilizzati", df_storico['luogo'].nunique())
+            
+            with col_g3:
+                st.metric("✅ Turni Totali", len(df_storico))
+                media_turni_giorno = len(df_storico) / max(df_storico['data'].nunique(), 1)
+                st.metric("📊 Media Turni/Giorno", f"{media_turni_giorno:.1f}")
+            
+            # Top volontari
+            st.write("#### 🏆 Top 10 Volontari più Attivi")
+            top_volontari = df_storico.groupby('volontario').size().reset_index(name='Turni')
+            top_volontari = top_volontari.sort_values('Turni', ascending=False).head(10)
+            
+            st.dataframe(
+                top_volontari.reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "volontario": st.column_config.TextColumn("👤 Volontario", width="large"),
+                    "Turni": st.column_config.NumberColumn("📊 Turni Totali", width="medium"),
+                }
+            )
+            
+        else:
+            st.info("📭 Nessun dato disponibile per le statistiche. Salva alcuni turni per iniziare!")
+    
+    conn.close()
+
 # --- SEZIONE SALVATAGGIO IN STORICO ---
 st.divider()
 st.subheader("💾 Salvataggio Giornata")
@@ -485,8 +724,8 @@ if st.session_state.programma:
                 st.success(f"✅ Salvati {record_salvati} turni nello storico del {data_t.strftime('%d/%m/%Y')}!")
                 st.info("💡 L'algoritmo di assegnazione automatica ora terrà conto di questi turni per dare priorità ai volontari più esperti con ogni cane.")
                 # Opzionalmente: svuoto il programma dopo il salvataggio
-                st.session_state.programma = []
-                st.rerun()
+                # st.session_state.programma = []
+                # st.rerun()
             else:
                 st.warning("⚠️ Nessun turno valido da salvare (solo turni speciali o senza cane).")
 else:
