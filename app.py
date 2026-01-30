@@ -16,7 +16,7 @@ def init_db():
     # Storico per statistiche
     c.execute('''CREATE TABLE IF NOT EXISTS storico 
                  (data TEXT, inizio TEXT, cane TEXT, volontario TEXT, luogo TEXT)''')
-    # Anagrafica con le colonne richieste dai titoli PDF
+    # Anagrafica basata sui titoli del PDF
     c.execute('''CREATE TABLE IF NOT EXISTS anagrafica_cani 
                  (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, strumenti TEXT, 
                   attivita TEXT, note TEXT, tempo TEXT, livello TEXT)''')
@@ -25,43 +25,43 @@ def init_db():
 
 def parse_dog_pdf(uploaded_file):
     """
-    Estrae i dati dal PDF cercando i titoli in MAIUSCOLO.
-    Cattura il testo minuscolo compreso tra un titolo e l'altro.
+    Estrae i dati dal PDF cercando i titoli in MAIUSCOLO (es. CIBO, NOTE).
+    Cattura il testo tra un titolo e l'altro.
     """
     reader = PyPDF2.PdfReader(uploaded_file)
     full_text = ""
     for page in reader.pages:
         full_text += page.extract_text() + "\n"
 
-    # I titoli specificati nella tua richiesta
+    # Titoli come richiesto
     headers = ["CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
     
-    # Il nome del cane viene preso dal nome del file (senza estensione)
+    # Nome del cane dal file
     nome_cane = uploaded_file.name.replace(".pdf", "").replace(".PDF", "").strip()
     dati_estratti = {"nome": nome_cane}
 
     for i, header in enumerate(headers):
-        # Cerchiamo il testo tra l'header attuale e il prossimo
         if i < len(headers) - 1:
             next_header = headers[i+1]
             pattern = f"{header}(.*?){next_header}"
         else:
-            # Per l'ultimo header (TEMPO), prendiamo tutto fino alla fine
             pattern = f"{header}(.*)$"
             
         match = re.search(pattern, full_text, re.DOTALL)
         
         if match:
-            # Pulizia: rimuove spazi multipli e ritorni a capo eccessivi
+            # Pulizia testo: rimuove ritorni a capo e spazi extra
             testo = match.group(1).strip()
-            dati_estratti[header.lower().replace("à", "a")] = testo
+            # Rimuoviamo eventuali accenti per compatibilità nomi colonne
+            key = header.lower().replace("à", "a")
+            dati_estratti[key] = testo
         else:
-            dati_estratti[header.lower().replace("à", "a")] = ""
+            dati_estratti[header.lower().replace("à", "a")] = "Dato non trovato"
             
     return dati_estratti
 
 def salva_anagrafica_db(dati):
-    """Inserisce o aggiorna i dati del cane nel database."""
+    """Salva o aggiorna i dati del cane."""
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
     c.execute('''INSERT OR REPLACE INTO anagrafica_cani 
@@ -74,7 +74,6 @@ def salva_anagrafica_db(dati):
     conn.close()
 
 def load_gsheets(sheet_name):
-    """Carica i dati dai fogli Google."""
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
@@ -131,7 +130,7 @@ def salva_programma_nel_db(programma, data_sel):
     conn.commit()
     conn.close()
 
-# Inizializzazione
+# Inizializzazione DB e sessione
 init_db()
 if 'programma' not in st.session_state: st.session_state.programma = []
 
@@ -141,14 +140,14 @@ st.title("🐾 Programma Canile - Gestione Dinamica")
 with st.sidebar:
     st.header("⚙️ Configurazione")
     data_t = st.date_input("Data Turno", datetime.today())
-    ora_i = st.time_input("Inizio", datetime.strptime("08:00", "%H:%M"))
-    ora_f = st.time_input("Fine", datetime.strptime("12:00", "%H:%M"))
+    ora_i = st.time_input("Ora Inizio", datetime.strptime("08:00", "%H:%M"))
+    ora_f = st.time_input("Ora Fine", datetime.strptime("12:00", "%H:%M"))
     st.divider()
     
     st.header("📂 Importazione PDF")
     pdf_files = st.file_uploader("Carica PDF Cani", accept_multiple_files=True, type="pdf")
     if pdf_files:
-        if st.button("Aggiorna Anagrafica da PDF"):
+        if st.button("Aggiorna Anagrafica da PDF", use_container_width=True):
             for pdf in pdf_files:
                 dati = parse_dog_pdf(pdf)
                 salva_anagrafica_db(dati)
@@ -159,7 +158,7 @@ df_c = load_gsheets("Cani")
 df_v = load_gsheets("Volontari")
 df_l = load_gsheets("Luoghi")
 
-tab_prog, tab_ana, tab_stats = st.tabs(["📅 Programma", "📋 Anagrafica", "📊 Statistiche"])
+tab_prog, tab_ana, tab_stats = st.tabs(["📅 Programma", "📋 Anagrafica Cani", "📊 Statistiche"])
 
 with tab_prog:
     c_p = st.multiselect("🐕 Cani in turno", df_c['nome'].tolist() if not df_c.empty else [])
@@ -168,11 +167,11 @@ with tab_prog:
 
     with st.expander("✏️ Inserimento Manuale"):
         col1, col2 = st.columns(2)
-        m_cane = col1.selectbox("Cane", ["-"] + c_p)
-        m_luo = col2.selectbox("Luogo", ["-"] + l_p)
-        m_vols = st.multiselect("Volontari", v_p)
-        m_ora = st.time_input("Ora Inizio ", ora_i)
-        if st.button("➕ Aggiungi Manuale"):
+        m_cane = col1.selectbox("Seleziona Cane", ["-"] + c_p)
+        m_luo = col2.selectbox("Seleziona Luogo", ["-"] + l_p)
+        m_vols = st.multiselect("Seleziona Volontari", v_p)
+        m_ora = st.time_input("Orario Inizio", ora_i)
+        if st.button("➕ Aggiungi Turno"):
             st.session_state.programma.append({
                 "Orario": m_ora.strftime('%H:%M'), "Cane": m_cane, 
                 "Volontario": ", ".join(m_vols), "Luogo": m_luo, 
@@ -203,14 +202,16 @@ with tab_prog:
             for _ in range(min(len(cani_restanti), len(l_liberi))):
                 if not v_liberi: break
                 for idx, cane in enumerate(cani_restanti):
-                    campo_scelto = next((ll for ll in l_liberi if campo_valido_per_reatvita(cane, ll, st.session_state.programma + manuali, ora_s, df_c, df_l)), None)
-                    if campo_scelto:
+                    # Controllo reattività
+                    if campo_valido_per_reattivita(cane, l_liberi[0], st.session_state.programma + manuali, ora_s, df_c, df_l):
+                        campo_scelto = l_liberi.pop(0)
                         cani_restanti.pop(idx)
-                        l_liberi.remove(campo_scelto)
+                        
                         v_scores = [(v, conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]) for v in v_liberi]
                         v_scores.sort(key=lambda x: x[1], reverse=True)
                         lead = v_scores[0][0]
                         v_liberi.remove(lead)
+                        
                         st.session_state.programma.append({"Orario": ora_s, "Cane": cane, "Volontario": lead, "Luogo": campo_scelto, "Attività": "Auto", "Inizio_Sort": ora_s})
                         break
             curr_t += timedelta(minutes=45)
@@ -222,7 +223,7 @@ with tab_prog:
 
     if c2.button("💾 Conferma e Salva Storico", type="primary", use_container_width=True):
         salva_programma_nel_db(st.session_state.programma, data_t)
-        st.success("Programma salvato nello storico!")
+        st.success("Programma salvato con successo!")
 
     if c3.button("🗑️ Svuota Tutto", use_container_width=True):
         st.session_state.programma = []
@@ -233,28 +234,32 @@ with tab_prog:
         st.data_editor(df_p, use_container_width=True, hide_index=True)
 
 with tab_ana:
-    st.header("📋 Anagrafica Cani (da PDF)")
+    st.header("📋 Database Anagrafica Cani")
     conn = sqlite3.connect('canile.db')
     df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
     conn.close()
     if not df_db.empty:
+        st.write("Dati estratti dai PDF caricati:")
         st.dataframe(df_db, use_container_width=True, hide_index=True)
     else:
-        st.info("Carica dei PDF nella barra laterale per popolare l'anagrafica.")
+        st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
 
 with tab_stats:
-    # ... (Il codice delle statistiche rimane lo stesso del tuo originale)
-    st.header("📊 Statistiche Lavoro")
+    st.header("📊 Statistiche Storiche")
     conn = sqlite3.connect('canile.db')
-    col_x, col_y = st.columns(2)
-    d_ini = col_x.date_input("Data Inizio", datetime.today() - timedelta(days=30))
-    d_end = col_y.date_input("Data Fine", datetime.today())
-    filtro = st.segmented_control("Analizza:", ["Volontario", "Cane", "Luogo"], default="Volontario")
+    col_a, col_b = st.columns(2)
+    d_ini = col_a.date_input("Inizio Periodo", datetime.today() - timedelta(days=30))
+    d_end = col_b.date_input("Fine Periodo", datetime.today())
+    
     query = "SELECT * FROM storico WHERE data BETWEEN ? AND ?"
     df_h = pd.read_sql_query(query, conn, params=(d_ini.strftime('%Y-%m-%d'), d_end.strftime('%Y-%m-%d')))
+    
     if not df_h.empty:
-        scelta = st.selectbox(f"Seleziona {filtro}", sorted(df_h[filtro.lower()].unique()))
-        res = df_h[df_h[filtro.lower()] == scelta]
-        st.metric("Totale attività", len(res))
+        filtro = st.radio("Filtra per:", ["Volontario", "Cane"], horizontal=True)
+        ogg = st.selectbox(f"Seleziona {filtro}", sorted(df_h[filtro.lower()].unique()))
+        res = df_h[df_h[filtro.lower()] == ogg]
+        st.metric(f"Attività totali per {ogg}", len(res))
         st.dataframe(res, hide_index=True)
+    else:
+        st.warning("Nessun dato presente per le date selezionate.")
     conn.close()
