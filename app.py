@@ -6,12 +6,8 @@ import re
 import sqlite3
 import io
 
-"""
-PROGRAMMA CANILE 
-"""
-
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Canile Soft v3", layout="centered")
+st.set_page_config(page_title="Programma Canile", layout="centered")
 
 def init_db():
     conn = sqlite3.connect('canile.db')
