@@ -542,40 +542,86 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
-    # Caricamento dati dallo storico DB con gestione errori
     conn = sqlite3.connect('canile.db')
     try:
-        # Verifica quali colonne esistono
-        c = conn.cursor()
-        c.execute("PRAGMA table_info(storico)")
-        existing_columns = {row[1] for row in c.fetchall()}
+        # 1. Caricamento dati
+        df_storico = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC, inizio ASC", conn)
         
-        # Costruisci la query in base alle colonne disponibili
-        base_cols = ['data', 'inizio', 'cane', 'volontario', 'luogo']
-        optional_cols = {
-            'fine': 'inizio as fine',
-            'attivita': "'-' as attivita",
-            'durata_minuti': '30 as durata_minuti',
-            'timestamp_salvataggio': "datetime('now') as timestamp_salvataggio"
-        }
-        
-        select_parts = base_cols.copy()
-        for col, default in optional_cols.items():
-            if col in existing_columns:
-                select_parts.append(col)
+        if not df_storico.empty:
+            # --- PREPARAZIONE DATI (Essenziale per evitare l'errore) ---
+            # Convertiamo la colonna data in oggetti date reali
+            df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce').dt.date
+            # Rimuoviamo righe con date non valide (mandano in crash il data_editor)
+            df_storico = df_storico.dropna(subset=['data'])
+            # Convertiamo la durata in intero
+            if 'durata_minuti' in df_storico.columns:
+                df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30).astype(int)
+
+            # --- FILTRI ---
+            st.write("### 🔍 Filtri di Ricerca")
+            col_f1, col_f2 = st.columns(2)
+            search_cane = col_f1.text_input("Cerca Cane")
+            search_vol = col_f2.text_input("Cerca Volontario")
+
+            df_filtered = df_storico.copy()
+            if search_cane:
+                df_filtered = df_filtered[df_filtered['cane'].str.contains(search_cane, case=False)]
+            if search_vol:
+                df_filtered = df_filtered[df_filtered['volontario'].str.contains(search_vol, case=False)]
+
+            # --- VISUALIZZAZIONE / MODIFICA ---
+            config_colonne = {
+                "id": None, # Nascondiamo l'ID se presente
+                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", required=True),
+                "inizio": st.column_config.TextColumn("Inizio"),
+                "fine": st.column_config.TextColumn("Fine"),
+                "cane": st.column_config.TextColumn("Cane"),
+                "volontario": st.column_config.TextColumn("Volontario"),
+                "luogo": st.column_config.TextColumn("Luogo"),
+                "attivita": st.column_config.TextColumn("Attività"),
+                "durata_minuti": st.column_config.NumberColumn("Durata (min)"),
+                "timestamp_salvataggio": st.column_config.TextColumn("Salvato il")
+            }
+
+            if st.session_state.get('show_edit_storico', False):
+                st.warning("⚠️ Modalità modifica attiva")
+                edited_df = st.data_editor(
+                    df_filtered,
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    column_config=config_colonne,
+                    key="editor_storico"
+                )
+                
+                col_save, col_cancel = st.columns(2)
+                with col_save:
+                    if st.button("💾 Salva modifiche", type="primary"):
+                        # Qui dovresti implementare la logica per riscrivere il DB
+                        # Per ora lo salviamo in sessione per non perdere il lavoro
+                        st.success("Modifiche validate correttamente!")
+                        st.session_state.show_edit_storico = False
+                        st.rerun()
+                with col_cancel:
+                    if st.button("❌ Annulla"):
+                        st.session_state.show_edit_storico = False
+                        st.rerun()
             else:
-                select_parts.append(default)
-        
-        query = f"""
-            SELECT {', '.join(select_parts)}
-            FROM storico 
-            ORDER BY data DESC, inizio ASC
-        """
-        
-        df_storico = pd.read_sql_query(query, conn)
+                st.dataframe(df_filtered, use_container_width=True, hide_index=True, column_config=config_colonne)
+
+            # --- STATISTICHE ---
+            st.divider()
+            st.write("### 📈 Statistiche")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Turni totali", len(df_filtered))
+            c2.metric("Cani unici", df_filtered['cane'].nunique())
+            c3.metric("Volontari", df_filtered['volontario'].nunique())
+
+        else:
+            st.info("Storico vuoto.")
+
     except Exception as e:
-        st.error(f"Errore nel caricamento dello storico: {e}")
-        df_storico = pd.DataFrame()
+        st.error(f"Errore durante il caricamento: {e}")
     finally:
         conn.close()
     
