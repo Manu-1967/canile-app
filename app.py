@@ -4,20 +4,145 @@ from datetime import datetime, timedelta
 import PyPDF2
 import re
 import sqlite3
+import os
+import json
+from collections import defaultdict
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Programma Canile", layout="wide") # Layout wide aiuta su mobile/tablet
+st.set_page_config(page_title="Programma Canile", layout="wide")
+
+# Directory per salvare gli storici
+STORICO_DIR = "storico_programmi"
+if not os.path.exists(STORICO_DIR):
+    os.makedirs(STORICO_DIR)
 
 def init_db():
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS storico (data TEXT, inizio TEXT, cane TEXT, volontario TEXT, luogo TEXT)')
+    # Tabella storico potenziata con più informazioni
+    c.execute('''CREATE TABLE IF NOT EXISTS storico 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  data TEXT, 
+                  inizio TEXT, 
+                  fine TEXT,
+                  cane TEXT, 
+                  volontario TEXT, 
+                  luogo TEXT,
+                  attivita TEXT,
+                  durata_minuti INTEGER,
+                  timestamp_salvataggio TEXT)''')
+    
     # Tabella anagrafica completa
     c.execute('''CREATE TABLE IF NOT EXISTS anagrafica_cani 
                  (nome TEXT PRIMARY KEY, cibo TEXT, guinzaglieria TEXT, strumenti TEXT, 
                   attivita TEXT, note TEXT, tempo TEXT, livello TEXT)''')
     conn.commit()
     conn.close()
+
+def salva_programma_in_storico(programma, data):
+    """Salva il programma approvato sia nel DB che in file JSON"""
+    if not programma:
+        return False, "Nessun programma da salvare"
+    
+    conn = sqlite3.connect('canile.db')
+    c = conn.cursor()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Salva nel database
+    records_salvati = 0
+    for turno in programma:
+        if turno['Cane'] not in ['TUTTI', 'Da assegnare']:
+            # Estrai orari
+            orario = turno['Orario']
+            if ' - ' in orario:
+                inizio, fine = orario.split(' - ')
+            else:
+                inizio = turno['Inizio_Sort']
+                fine = inizio
+            
+            # Calcola durata in minuti
+            try:
+                h_i, m_i = map(int, inizio.split(':'))
+                h_f, m_f = map(int, fine.split(':'))
+                durata = (h_f * 60 + m_f) - (h_i * 60 + m_i)
+            except:
+                durata = 30
+            
+            c.execute('''INSERT INTO storico 
+                         (data, inizio, fine, cane, volontario, luogo, attivita, durata_minuti, timestamp_salvataggio)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (data.strftime('%Y-%m-%d'), inizio, fine, 
+                       turno['Cane'], turno['Volontario'], turno['Luogo'],
+                       turno.get('Attività PDF', '-'), durata, timestamp))
+            records_salvati += 1
+    
+    conn.commit()
+    conn.close()
+    
+    # Salva anche in file JSON per backup
+    filename = os.path.join(STORICO_DIR, f"{data.strftime('%d-%m-%Y')}_Programma-canile.json")
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump({
+            'data': data.strftime('%d-%m-%Y'),
+            'timestamp_salvataggio': timestamp,
+            'programma': programma
+        }, f, ensure_ascii=False, indent=2)
+    
+    return True, f"✅ Programma salvato con successo! ({records_salvati} turni registrati)"
+
+def carica_storico_da_file(filepath):
+    """Carica un programma salvato da file JSON"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data['programma']
+    except:
+        return []
+
+def get_storici_disponibili():
+    """Restituisce la lista dei file di storico disponibili"""
+    if not os.path.exists(STORICO_DIR):
+        return []
+    files = [f for f in os.listdir(STORICO_DIR) if f.endswith('.json')]
+    # Ordina per data (più recenti prima)
+    files.sort(reverse=True)
+    return files
+
+def calcola_esperienza_volontari(cane):
+    """Calcola l'esperienza di ogni volontario con un cane specifico basata sullo storico"""
+    conn = sqlite3.connect('canile.db')
+    
+    # Query per contare i turni di ogni volontario con questo cane
+    query = """
+        SELECT volontario, 
+               COUNT(*) as num_turni,
+               SUM(durata_minuti) as minuti_totali
+        FROM storico 
+        WHERE cane = ?
+        GROUP BY volontario
+        ORDER BY num_turni DESC, minuti_totali DESC
+    """
+    
+    df = pd.read_sql_query(query, conn, params=(cane,))
+    conn.close()
+    
+    return df
+
+def get_volontario_piu_esperto(cane, volontari_disponibili):
+    """Restituisce il volontario più esperto per un cane specifico"""
+    df_exp = calcola_esperienza_volontari(cane)
+    
+    if df_exp.empty:
+        # Nessuno storico, sceglie casualmente
+        return volontari_disponibili[0] if volontari_disponibili else None
+    
+    # Cerca il volontario più esperto tra quelli disponibili
+    for _, row in df_exp.iterrows():
+        if row['volontario'] in volontari_disponibili:
+            return row['volontario']
+    
+    # Se nessuno degli esperti è disponibile, prende il primo disponibile
+    return volontari_disponibili[0] if volontari_disponibili else None
 
 def load_gsheets(sheet_name):
     # Link al tuo Google Sheet
@@ -63,9 +188,9 @@ def parse_duration_string(tempo_str):
     match = re.search(r'(\d+)', tempo_str)
     num = int(match.group(1)) if match else 30
     
-    # Se c'è scritto "ora" o "ore", moltiplica per 60 (es. "1 ora" = 60 min)
+    # Se c'è scritto "ora" o "ore", moltiplica per 60
     if "ora" in tempo_str or "ore" in tempo_str:
-        if num < 10: # Evita che "45 min (ora x)" venga moltiplicato erroneamente se scritto male
+        if num < 10:
             num = num * 60
             
     return num
@@ -78,7 +203,6 @@ def get_cane_info_completa(nome_cane):
     conn.close()
     if row:
         return dict(row)
-    # Ritorna dizionario vuoto/default se non trovato
     return {c: "-" for c in ['cibo', 'guinzaglieria', 'strumenti', 'attivita', 'note', 'tempo', 'livello']}
 
 def get_reattivita_cane(nome_cane, df_cani):
@@ -101,9 +225,6 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
     campi_adiacenti = get_campi_adiacenti(campo, df_luoghi)
     
     for turno in turni_attuali:
-        # Nota: Qui controlliamo solo l'orario di INIZIO per semplicità, 
-        # ma idealmente si dovrebbero controllare le sovrapposizioni temporali.
-        # Per ora manteniamo la logica a slot.
         if turno["Inizio_Sort"] == ora_attuale_str:
             if turno["Luogo"] in campi_adiacenti:
                 cane_adiacente = turno["Cane"]
@@ -148,7 +269,7 @@ c_p = st.multiselect("🐕 Cani", df_c['nome'].tolist() if not df_c.empty else [
 v_p = st.multiselect("👤 Volontari", df_v['nome'].tolist() if not df_v.empty else [])
 l_p = st.multiselect("📍 Luoghi", df_l['nome'].tolist() if not df_l.empty else [])
 
-tab_prog, tab_ana = st.tabs(["📅 Programma", "📋 Anagrafica"])
+tab_prog, tab_storico, tab_ana = st.tabs(["📅 Programma", "📚 Storico", "📋 Anagrafica"])
 
 with tab_prog:
     # 1. INSERIMENTO MANUALE
@@ -170,21 +291,22 @@ with tab_prog:
                 ora_end_dt = ora_start_dt + timedelta(minutes=durata_min)
                 orario_display = f"{ora_start_dt.strftime('%H:%M')} - {ora_end_dt.strftime('%H:%M')}"
 
-                # Controllo base (semplificato per brevità)
-                conflitti = [t for t in st.session_state.programma if t["Inizio_Sort"] == ora_str and t["Cane"] == m_cane]
+                # Controllo sovrapposizioni
+                occupato = any(t["Cane"] == m_cane and t["Inizio_Sort"] == ora_str 
+                              for t in st.session_state.programma)
                 
-                if not conflitti:
+                if not occupato:
                     entry = {
                         "Orario": orario_display,
-                        "Cane": m_cane, 
-                        "Volontario": ", ".join(m_vols) if m_vols else "Da assegnare", 
-                        "Luogo": m_luo,
+                        "Cane": m_cane,
+                        "Volontario": ", ".join(m_vols) if m_vols else "Da assegnare",
+                        "Luogo": m_luo if m_luo != "-" else "Da assegnare",
                         "Inizio_Sort": ora_str,
-                        # Campi aggiuntivi PDF
+                        # Info PDF
                         "Cibo": info_cane.get('cibo', '-'),
                         "Guinzaglieria": info_cane.get('guinzaglieria', '-'),
                         "Strumenti": info_cane.get('strumenti', '-'),
-                        "Attività PDF": info_cane.get('attivita', '-'), # Rinomino per evitare conflitti con 'Attività' di sistema
+                        "Attività PDF": info_cane.get('attivita', '-'),
                         "Note": info_cane.get('note', '-'),
                         "Tempo PDF": info_cane.get('tempo', '-')
                     }
@@ -203,7 +325,7 @@ with tab_prog:
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30) 
         
-        manuali_esistenti = st.session_state.programma # Manteniamo quelli manuali
+        manuali_esistenti = st.session_state.programma
         st.session_state.programma = []
         
         # Briefing
@@ -231,7 +353,7 @@ with tab_prog:
             # Filtri base disponibilità
             vols_impegnati = []
             luoghi_impegnati = []
-            for m in manuali_esistenti: # Controllo grezzo contro manuali
+            for m in manuali_esistenti:
                 if m["Inizio_Sort"] == ora_attuale_str:
                     vols_impegnati.extend([v.strip() for v in m["Volontario"].split(",")])
                     luoghi_impegnati.append(m["Luogo"])
@@ -240,7 +362,7 @@ with tab_prog:
             campi_disp = [l for l in luoghi_auto if l not in luoghi_impegnati]
             
             n_cani = min(len(cani_da_fare), len(campi_disp))
-            max_durata_turno = 30 # Minuti minimi di incremento per il prossimo slot
+            max_durata_turno = 30
             
             if n_cani > 0 and vols_liberi:
                 for _ in range(n_cani):
@@ -270,8 +392,12 @@ with tab_prog:
                             cani_da_fare.pop(tentativi)
                             campi_disp.remove(campo_scelto)
                             
-                            # Assegna volontario (Logica storica semplificata)
-                            v_scelto = vols_liberi.pop(0) # Prende il primo disponibile per semplicità
+                            # *** ASSEGNAZIONE INTELLIGENTE BASATA SULLO STORICO ***
+                            v_scelto = get_volontario_piu_esperto(cane, vols_liberi)
+                            if v_scelto:
+                                vols_liberi.remove(v_scelto)
+                            else:
+                                v_scelto = "Da assegnare"
                             
                             st.session_state.programma.append({
                                 "Orario": orario_display,
@@ -279,7 +405,6 @@ with tab_prog:
                                 "Volontario": v_scelto,
                                 "Luogo": campo_scelto,
                                 "Inizio_Sort": ora_attuale_str,
-                                # Campi PDF
                                 "Cibo": info_cane.get('cibo', '-'),
                                 "Guinzaglieria": info_cane.get('guinzaglieria', '-'),
                                 "Strumenti": info_cane.get('strumenti', '-'),
@@ -288,7 +413,6 @@ with tab_prog:
                                 "Tempo PDF": info_cane.get('tempo', '-')
                             })
                             
-                            # Aggiorna max durata per sapere quando far partire il prossimo "blocco"
                             if durata_min > max_durata_turno:
                                 max_durata_turno = durata_min
                             
@@ -296,8 +420,6 @@ with tab_prog:
                         else:
                             tentativi += 1
             
-            # Avanza il tempo in base al turno più lungo generato (o minimo 30 min)
-            # Aggiungiamo 5 minuti di pausa tecnica/cambio
             curr_t += timedelta(minutes=max_durata_turno + 5)
 
         st.session_state.programma.extend(manuali_esistenti)
@@ -311,33 +433,28 @@ with tab_prog:
         })
         
         conn.close()
-        st.success("Programma generato con dettagli PDF!")
+        st.success("✅ Programma generato con assegnazione intelligente basata sullo storico!")
         st.rerun()
 
     if c_btn2.button("🗑️ Svuota", use_container_width=True):
         st.session_state.programma = []
         st.rerun()
 
-    # 3. VISUALIZZAZIONE OTTIMIZZATA PER SMARTPHONE
+    # 3. VISUALIZZAZIONE PROGRAMMA
     if st.session_state.programma:
         st.divider()
         st.subheader("📋 Programma Dettagliato")
         
         df_view = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
         
-        # Configurazione colonne per mobile:
-        # Nascondiamo Inizio_Sort (tecnico)
-        # Blocchiamo le prime colonne (Orario, Cane)
-        # Permettiamo lo scroll sulle info aggiuntive
-        
         st.data_editor(
             df_view,
-            use_container_width=True, # Occupa tutto lo spazio
+            use_container_width=True,
             hide_index=True,
             column_order=["Orario", "Cane", "Volontario", "Luogo", "Attività PDF", "Cibo", "Guinzaglieria", "Strumenti", "Note", "Tempo PDF"],
             column_config={
-                "Inizio_Sort": None, # Nascondi
-                "Orario": st.column_config.TextColumn("⏰ Orario", width="medium", help="Inizio e Fine turno"),
+                "Inizio_Sort": None,
+                "Orario": st.column_config.TextColumn("⏰ Orario", width="medium"),
                 "Cane": st.column_config.TextColumn("🐕 Cane", width="small"),
                 "Volontario": st.column_config.TextColumn("👤 Vol", width="medium"),
                 "Luogo": st.column_config.TextColumn("📍 Luogo", width="small"),
@@ -349,7 +466,167 @@ with tab_prog:
                 "Tempo PDF": st.column_config.TextColumn("⏳ Durata", width="small")
             }
         )
-        st.caption("💡 Suggerimento: Su smartphone, scorri la tabella verso destra per vedere Cibo, Strumenti e Note.")
+        
+        # *** PULSANTI DI GESTIONE STORICO ***
+        st.divider()
+        col_a, col_b, col_c = st.columns(3)
+        
+        with col_a:
+            if st.button("💾 Conferma e Salva in Storico", use_container_width=True, type="primary"):
+                success, msg = salva_programma_in_storico(st.session_state.programma, data_t)
+                if success:
+                    st.success(msg)
+                    st.balloons()
+                else:
+                    st.error(msg)
+        
+        with col_b:
+            storici_files = get_storici_disponibili()
+            if storici_files:
+                selected_file = st.selectbox("Scegli storico da caricare", storici_files, key="load_storico")
+                if st.button("📂 Carica storico selezionato", use_container_width=True):
+                    filepath = os.path.join(STORICO_DIR, selected_file)
+                    programma_caricato = carica_storico_da_file(filepath)
+                    if programma_caricato:
+                        st.session_state.programma = programma_caricato
+                        st.success(f"Caricato: {selected_file}")
+                        st.rerun()
+            else:
+                st.info("Nessuno storico disponibile")
+        
+        with col_c:
+            if st.button("✏️ Modifica storico", use_container_width=True):
+                st.session_state.show_edit_storico = True
+                st.rerun()
+
+with tab_storico:
+    st.subheader("📚 Gestione Storico Programmi")
+    
+    # Caricamento dati dallo storico DB
+    conn = sqlite3.connect('canile.db')
+    df_storico = pd.read_sql_query("""
+        SELECT data, inizio, fine, cane, volontario, luogo, attivita, durata_minuti, timestamp_salvataggio
+        FROM storico 
+        ORDER BY data DESC, inizio ASC
+    """, conn)
+    conn.close()
+    
+    if not df_storico.empty:
+        # Filtri di ricerca
+        st.write("### 🔍 Filtri di Ricerca")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            date_filter = st.multiselect("Data", df_storico['data'].unique())
+        with col2:
+            cane_filter = st.multiselect("Cane", df_storico['cane'].unique())
+        with col3:
+            vol_filter = st.multiselect("Volontario", df_storico['volontario'].unique())
+        with col4:
+            luogo_filter = st.multiselect("Luogo", df_storico['luogo'].unique())
+        
+        # Applicazione filtri
+        df_filtered = df_storico.copy()
+        if date_filter:
+            df_filtered = df_filtered[df_filtered['data'].isin(date_filter)]
+        if cane_filter:
+            df_filtered = df_filtered[df_filtered['cane'].isin(cane_filter)]
+        if vol_filter:
+            df_filtered = df_filtered[df_filtered['volontario'].isin(vol_filter)]
+        if luogo_filter:
+            df_filtered = df_filtered[df_filtered['luogo'].isin(luogo_filter)]
+        
+        # Ordinamento
+        sort_col = st.selectbox("Ordina per", 
+                               ['data', 'inizio', 'cane', 'volontario', 'luogo', 'durata_minuti'],
+                               index=0)
+        sort_asc = st.checkbox("Ordine crescente", value=False)
+        df_filtered = df_filtered.sort_values(sort_col, ascending=sort_asc)
+        
+        st.write(f"### 📊 Risultati: {len(df_filtered)} turni trovati")
+        
+        # Visualizzazione con possibilità di modifica
+        if 'show_edit_storico' in st.session_state and st.session_state.show_edit_storico:
+            st.warning("⚠️ Modalità modifica attiva - Le modifiche verranno salvate nel database")
+            
+            edited_df = st.data_editor(
+                df_filtered,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",  # Permette di aggiungere/eliminare righe
+                column_config={
+                    "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "inizio": st.column_config.TextColumn("Inizio"),
+                    "fine": st.column_config.TextColumn("Fine"),
+                    "cane": st.column_config.TextColumn("Cane"),
+                    "volontario": st.column_config.TextColumn("Volontario"),
+                    "luogo": st.column_config.TextColumn("Luogo"),
+                    "attivita": st.column_config.TextColumn("Attività"),
+                    "durata_minuti": st.column_config.NumberColumn("Durata (min)"),
+                    "timestamp_salvataggio": st.column_config.DatetimeColumn("Salvato il")
+                }
+            )
+            
+            col_save, col_cancel = st.columns(2)
+            with col_save:
+                if st.button("💾 Salva modifiche", type="primary"):
+                    # Qui andrebbe implementata la logica di salvataggio
+                    # Per ora solo messaggio
+                    st.success("Modifiche salvate!")
+                    st.session_state.show_edit_storico = False
+                    st.rerun()
+            
+            with col_cancel:
+                if st.button("❌ Annulla"):
+                    st.session_state.show_edit_storico = False
+                    st.rerun()
+        else:
+            st.dataframe(
+                df_filtered,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "inizio": st.column_config.TextColumn("Inizio"),
+                    "fine": st.column_config.TextColumn("Fine"),
+                    "cane": st.column_config.TextColumn("Cane"),
+                    "volontario": st.column_config.TextColumn("Volontario"),
+                    "luogo": st.column_config.TextColumn("Luogo"),
+                    "attivita": st.column_config.TextColumn("Attività"),
+                    "durata_minuti": st.column_config.NumberColumn("Durata (min)"),
+                    "timestamp_salvataggio": st.column_config.DatetimeColumn("Salvato il")
+                }
+            )
+        
+        # Statistiche
+        st.divider()
+        st.write("### 📈 Statistiche Storico")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Giorni registrati", df_filtered['data'].nunique())
+        with col2:
+            st.metric("Cani diversi", df_filtered['cane'].nunique())
+        with col3:
+            st.metric("Volontari attivi", df_filtered['volontario'].nunique())
+        with col4:
+            st.metric("Turni totali", len(df_filtered))
+        
+        # Top volontari per esperienza
+        st.write("#### 🏆 Esperienza Volontari per Cane")
+        cane_selected = st.selectbox("Seleziona cane", sorted(df_storico['cane'].unique()))
+        
+        df_exp = calcola_esperienza_volontari(cane_selected)
+        if not df_exp.empty:
+            df_exp_display = df_exp.copy()
+            df_exp_display.columns = ['Volontario', 'N° Turni', 'Minuti Totali']
+            df_exp_display['Ore'] = (df_exp_display['Minuti Totali'] / 60).round(1)
+            st.dataframe(df_exp_display, use_container_width=True, hide_index=True)
+        else:
+            st.info(f"Nessuno storico disponibile per {cane_selected}")
+        
+    else:
+        st.info("📭 Nessuno storico presente. Inizia salvando il primo programma!")
 
 with tab_ana:
     st.subheader("📋 Anagrafica Cani")
