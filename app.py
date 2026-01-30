@@ -59,18 +59,59 @@ def parse_dog_pdf(uploaded_file):
 
     return dati
 
-def salva_anagrafica_db(dati):
-    """Salva o aggiorna i dati del cane."""
-    conn = sqlite3.connect('canile.db')
+def salva_anagrafica(dati):
+    conn = sqlite3.connect("canile.db")
     c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO anagrafica_cani 
-                 (nome, cibo, guinzaglieria, strumenti, attivita, note, tempo) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?)''', 
-              (dati['nome'], dati.get('cibo', ''), dati.get('guinzaglieria', ''), 
-               dati.get('strumenti', ''), dati.get('attivita', ''), 
-               dati.get('note', ''), dati.get('tempo', '')))
+
+    c.execute("""
+        INSERT OR REPLACE INTO anagrafica_cani
+        (nome, cibo, guinzaglieria, strumenti, attivita, note, tempo)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        dati["nome"],
+        dati["cibo"],
+        dati["guinzaglieria"],
+        dati["strumenti"],
+        dati["attivita"],
+        dati["note"],
+        dati["tempo"]
+    ))
+
     conn.commit()
     conn.close()
+
+def genera_excel_volontari():
+    conn = sqlite3.connect("canile.db")
+    df = pd.read_sql("SELECT * FROM anagrafica_cani", conn)
+    conn.close()
+
+    file_excel = "programma_volontari.xlsx"
+    df.to_excel(file_excel, index=False)
+
+    return file_excel
+
+def genera_pdf_volontari():
+    conn = sqlite3.connect("canile.db")
+    df = pd.read_sql("SELECT * FROM anagrafica_cani", conn)
+    conn.close()
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    for _, row in df.iterrows():
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, row["nome"], ln=True)
+
+        pdf.set_font("Arial", "", 11)
+        for campo in ["cibo", "guinzaglieria", "strumenti", "attivita", "note", "tempo"]:
+            pdf.multi_cell(0, 8, f"{campo.upper()}: {row[campo]}")
+            pdf.ln(1)
+
+    file_pdf = "programma_volontari.pdf"
+    pdf.output(file_pdf)
+
+    return file_pdf
 
 def load_gsheets(sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/1pcFa454IT1tlykbcK-BeAU9hnIQ_D8V_UuZaKI_KtYM/gviz/tq?tqx=out:csv&sheet={sheet_name}"
@@ -233,15 +274,33 @@ with tab_prog:
         st.data_editor(df_p, use_container_width=True, hide_index=True)
 
 with tab_ana:
-    st.header("📋 Database Anagrafica Cani")
-    conn = sqlite3.connect('canile.db')
-    df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
-    conn.close()
-    if not df_db.empty:
-        st.write("Dati estratti dai PDF caricati:")
-        st.dataframe(df_db, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
+    # st.header("📋 Database Anagrafica Cani")
+    # conn = sqlite3.connect('canile.db')
+    # df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
+    # conn.close()
+    # if not df_db.empty:
+      #   st.write("Dati estratti dai PDF caricati:")
+      #   st.dataframe(df_db, use_container_width=True, hide_index=True)
+    # else:
+      #   st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
+
+    st.header("Carica anagrafica cane")
+
+    pdf_file = st.file_uploader("Carica PDF cane", type="pdf")
+
+    if pdf_file:
+        dati = parse_dog_pdf(pdf_file)
+        salva_anagrafica(dati)
+
+        st.success(f"Anagrafica {dati['nome']} caricata correttamente")
+
+        if st.button("Genera programma volontari"):
+            excel = genera_excel_volontari()
+            pdf = genera_pdf_volontari()
+
+            st.download_button("Scarica Excel", open(excel, "rb"), file_name=excel)
+            st.download_button("Scarica PDF", open(pdf, "rb"), file_name=pdf)
+
 
 with tab_stats:
     st.header("📊 Statistiche Storiche")
