@@ -573,67 +573,40 @@ with tab_storico:
         """
         
         df_storico = pd.read_sql_query(query, conn)
-    except Exception as e:
-        st.error(f"Errore nel caricamento dello storico: {e}")
-        df_storico = pd.DataFrame()
-    finally:
-        conn.close()
+    # ... (codice precedente invariato fino a df_storico = pd.read_sql_query)
+
+if not df_storico.empty:
+    # --- PASSAGGIO FONDAMENTALE: Conversione tipi ---
+    # Convertiamo la colonna 'data' da stringa a oggetto datetime
+    df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce')
+    # Assicuriamoci che durata_minuti sia numerico
+    df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30)
     
-    if not df_storico.empty:
-        # Filtri di ricerca
-        st.write("### 🔍 Filtri di Ricerca")
-        col1, col2, col3, col4 = st.columns(4)
+    st.write("### 🔍 Filtri di Ricerca")
+    # ... (resto dei filtri)
+
+    # All'interno del blocco 'show_edit_storico'
+    if 'show_edit_storico' in st.session_state and st.session_state.show_edit_storico:
+        st.warning("⚠️ Modalità modifica attiva")
         
-        with col1:
-            date_filter = st.multiselect("Data", df_storico['data'].unique())
-        with col2:
-            cane_filter = st.multiselect("Cane", df_storico['cane'].unique())
-        with col3:
-            vol_filter = st.multiselect("Volontario", df_storico['volontario'].unique())
-        with col4:
-            luogo_filter = st.multiselect("Luogo", df_storico['luogo'].unique())
-        
-        # Applicazione filtri
-        df_filtered = df_storico.copy()
-        if date_filter:
-            df_filtered = df_filtered[df_filtered['data'].isin(date_filter)]
-        if cane_filter:
-            df_filtered = df_filtered[df_filtered['cane'].isin(cane_filter)]
-        if vol_filter:
-            df_filtered = df_filtered[df_filtered['volontario'].isin(vol_filter)]
-        if luogo_filter:
-            df_filtered = df_filtered[df_filtered['luogo'].isin(luogo_filter)]
-        
-        # Ordinamento
-        sort_col = st.selectbox("Ordina per", 
-                               ['data', 'inizio', 'cane', 'volontario', 'luogo', 'durata_minuti'],
-                               index=0)
-        sort_asc = st.checkbox("Ordine crescente", value=False)
-        df_filtered = df_filtered.sort_values(sort_col, ascending=sort_asc)
-        
-        st.write(f"### 📊 Risultati: {len(df_filtered)} turni trovati")
-        
-        # Visualizzazione con possibilità di modifica
-        if 'show_edit_storico' in st.session_state and st.session_state.show_edit_storico:
-            st.warning("⚠️ Modalità modifica attiva - Le modifiche verranno salvate nel database")
-            
-            edited_df = st.data_editor(
-                df_filtered,
-                use_container_width=True,
-                hide_index=True,
-                num_rows="dynamic",  # Permette di aggiungere/eliminare righe
-                column_config={
-                    "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                    "inizio": st.column_config.TextColumn("Inizio"),
-                    "fine": st.column_config.TextColumn("Fine"),
-                    "cane": st.column_config.TextColumn("Cane"),
-                    "volontario": st.column_config.TextColumn("Volontario"),
-                    "luogo": st.column_config.TextColumn("Luogo"),
-                    "attivita": st.column_config.TextColumn("Attività"),
-                    "durata_minuti": st.column_config.NumberColumn("Durata (min)"),
-                    "timestamp_salvataggio": st.column_config.DatetimeColumn("Salvato il")
-                }
-            )
+        edited_df = st.data_editor(
+            df_filtered,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="dynamic",
+            column_config={
+                # Ora che la colonna è datetime, DateColumn funzionerà correttamente
+                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                "inizio": st.column_config.TextColumn("Inizio"),
+                "fine": st.column_config.TextColumn("Fine"),
+                "cane": st.column_config.TextColumn("Cane"),
+                "volontario": st.column_config.TextColumn("Volontario"),
+                "luogo": st.column_config.TextColumn("Luogo"),
+                "attivita": st.column_config.TextColumn("Attività"),
+                "durata_minuti": st.column_config.NumberColumn("Durata (min)"),
+                "timestamp_salvataggio": st.column_config.DatetimeColumn("Salvato il")
+            }
+        )
             
             col_save, col_cancel = st.columns(2)
             with col_save:
@@ -702,3 +675,4 @@ with tab_ana:
     df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
     st.dataframe(df_db, use_container_width=True, hide_index=True)
     conn.close()
+
