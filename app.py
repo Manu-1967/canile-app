@@ -195,249 +195,210 @@ def parse_duration_string(tempo_str):
             
     return num
 
-def get_cane_info_completa(nome_cane):
-    """Recupera TUTTI i dati del cane dal DB."""
-    conn = sqlite3.connect('canile.db')
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM anagrafica_cani WHERE nome=?", (nome_cane,)).fetchone()
-    conn.close()
-    if row:
-        return dict(row)
-    return {c: "-" for c in ['cibo', 'guinzaglieria', 'strumenti', 'attivita', 'note', 'tempo', 'livello']}
+def crea_turno(inizio, fine, cane, volontario, luogo, pdf_data=None):
+    """Helper per creare un turno"""
+    orario = f"{inizio} - {fine}"
+    turno = {
+        "Orario": orario,
+        "Inizio_Sort": inizio,
+        "Cane": cane,
+        "Volontario": volontario,
+        "Luogo": luogo,
+        "Attività PDF": pdf_data.get('ATTIVITÀ', 'N/D') if pdf_data else 'N/D',
+        "Cibo": pdf_data.get('CIBO', 'N/D') if pdf_data else 'N/D',
+        "Guinzaglieria": pdf_data.get('GUINZAGLIERIA', 'N/D') if pdf_data else 'N/D',
+        "Strumenti": pdf_data.get('STRUMENTI', 'N/D') if pdf_data else 'N/D',
+        "Note": pdf_data.get('NOTE', 'N/D') if pdf_data else 'N/D',
+        "Tempo PDF": pdf_data.get('TEMPO', 'N/D') if pdf_data else 'N/D'
+    }
+    return turno
 
-def get_reattivita_cane(nome_cane, df_cani):
-    if df_cani.empty or 'reattività' not in df_cani.columns: return 0
-    riga = df_cani[df_cani['nome'] == nome_cane]
-    return float(riga.iloc[0]['reattività']) if not riga.empty else 0
-
-def get_campi_adiacenti(campo, df_luoghi):
-    if df_luoghi.empty or 'adiacente' not in df_luoghi.columns: return []
-    riga = df_luoghi[df_luoghi['nome'] == campo]
-    if not riga.empty:
-        adiacenti_str = str(riga.iloc[0]['adiacente']).strip()
-        if adiacenti_str and adiacenti_str != 'nan':
-            return [c.strip() for c in adiacenti_str.split(',') if c.strip()]
-    return []
-
-def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_cani, df_luoghi):
-    """Logica di controllo reattività bidirezionale"""
-    reattivita_cane_corrente = get_reattivita_cane(cane, df_cani)
-    campi_adiacenti = get_campi_adiacenti(campo, df_luoghi)
+def genera_programma(data_target, turni_info, df_luoghi, df_pdf_info):
+    programma = []
+    luoghi_occupati = set()
+    volontari_occupati = {}
+    cani_usciti = {}
     
-    for turno in turni_attuali:
-        if turno["Inizio_Sort"] == ora_attuale_str:
-            if turno["Luogo"] in campi_adiacenti:
-                cane_adiacente = turno["Cane"]
-                if cane_adiacente in ["TUTTI", "Da assegnare"]: continue
+    # Ordina i turni per orario di inizio
+    turni_ordinati = sorted(turni_info, key=lambda x: x['inizio'])
+    
+    for turno in turni_ordinati:
+        inizio = turno['inizio']
+        vol = turno['volontario']
+        cani_richiesti = turno['cani']
+        num_cani = turno['num_cani']
+        
+        # Determina durata e fine del turno
+        durata = 30  # default
+        if num_cani == 1 and len(cani_richiesti) == 1:
+            cane = cani_richiesti[0]
+            if cane in df_pdf_info.index:
+                durata = df_pdf_info.at[cane, 'durata_min']
+        
+        h, m = map(int, inizio.split(':'))
+        fine_dt = datetime.strptime(inizio, '%H:%M') + timedelta(minutes=durata)
+        fine = fine_dt.strftime('%H:%M')
+        
+        # Verifica disponibilità volontario
+        if vol in volontari_occupati:
+            if volontari_occupati[vol] > inizio:
+                continue
+        
+        # Assegna luoghi e crea turni
+        if num_cani == 1:
+            # Un singolo cane
+            cane = cani_richiesti[0] if cani_richiesti else "Da assegnare"
+            
+            # Verifica se cane già uscito
+            if cane in cani_usciti:
+                if cani_usciti[cane] > inizio:
+                    continue
+            
+            # Trova luogo disponibile
+            luoghi_disponibili = []
+            for _, row in df_luoghi.iterrows():
+                luogo = row['luogo']
+                if row['automatico'].lower() == 'sì':
+                    if luogo not in luoghi_occupati:
+                        luoghi_disponibili.append(luogo)
+            
+            if not luoghi_disponibili:
+                luogo = "Da assegnare"
+            else:
+                # Usa storico per scegliere luogo preferito
+                luogo = luoghi_disponibili[0]
+            
+            # Ottieni dati PDF
+            pdf_data = None
+            if cane in df_pdf_info.index:
+                pdf_data = df_pdf_info.loc[cane].to_dict()
+            
+            # Crea turno
+            turno_obj = crea_turno(inizio, fine, cane, vol, luogo, pdf_data)
+            programma.append(turno_obj)
+            
+            # Aggiorna occupazioni
+            luoghi_occupati.add(luogo)
+            volontari_occupati[vol] = fine
+            cani_usciti[cane] = fine
+            
+        else:
+            # Turno multi-cane
+            for cane in cani_richiesti:
+                # Verifica se cane già uscito
+                if cane in cani_usciti:
+                    if cani_usciti[cane] > inizio:
+                        continue
                 
-                reattivita_cane_adiacente = get_reattivita_cane(cane_adiacente, df_cani)
-                if reattivita_cane_corrente > 5 or reattivita_cane_adiacente > 5:
-                    return False
-    return True
+                # Trova luogo disponibile
+                luoghi_disponibili = []
+                for _, row in df_luoghi.iterrows():
+                    luogo = row['luogo']
+                    if row['automatico'].lower() == 'sì':
+                        if luogo not in luoghi_occupati:
+                            luoghi_disponibili.append(luogo)
+                
+                if not luoghi_disponibili:
+                    continue
+                
+                luogo = luoghi_disponibili[0]
+                
+                # Ottieni dati PDF
+                pdf_data = None
+                if cane in df_pdf_info.index:
+                    pdf_data = df_pdf_info.loc[cane].to_dict()
+                
+                # Crea turno
+                turno_obj = crea_turno(inizio, fine, cane, vol, luogo, pdf_data)
+                programma.append(turno_obj)
+                
+                # Aggiorna occupazioni
+                luoghi_occupati.add(luogo)
+                cani_usciti[cane] = fine
+            
+            # Aggiorna volontario una sola volta
+            volontari_occupati[vol] = fine
+    
+    return programma
 
+# --- INIZIALIZZAZIONE ---
 init_db()
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ Setup")
-    data_t = st.date_input("Data", datetime.today())
-    ora_i = st.time_input("Inizio Giornata", datetime.strptime("08:00", "%H:%M"))
-    ora_f = st.time_input("Fine Giornata", datetime.strptime("12:00", "%H:%M"))
-    
-    st.divider()
-    pdf_files = st.file_uploader("📂 Carica PDF Cani", accept_multiple_files=True, type="pdf")
-    if pdf_files:
-        conn = sqlite3.connect('canile.db')
-        for f in pdf_files:
-            reader = PyPDF2.PdfReader(f)
-            text = " ".join([page.extract_text() for page in reader.pages])
-            info = parse_pdf_content(text)
-            nome_cane = f.name.split('.')[0].strip().capitalize()
-            conn.execute("INSERT OR REPLACE INTO anagrafica_cani VALUES (?,?,?,?,?,?,?,?)", 
-                         (nome_cane, info['CIBO'], info['GUINZAGLIERIA'], info['STRUMENTI'], 
-                          info['ATTIVITÀ'], info['NOTE'], info['TEMPO'], info['LIVELLO']))
-        conn.commit(); conn.close()
-        st.success("Anagrafica aggiornata!")
+# Session state
+if 'programma' not in st.session_state:
+    st.session_state.programma = []
 
-df_c = load_gsheets("Cani"); df_v = load_gsheets("Volontari"); df_l = load_gsheets("Luoghi")
-if 'programma' not in st.session_state: st.session_state.programma = []
-
-st.title(" 🐕 Programma Canile 🐕 ")
-
-# --- SELEZIONE RISORSE ---
-c_p = st.multiselect("🐕 Cani", df_c['nome'].tolist() if not df_c.empty else [])
-v_p = st.multiselect("👤 Volontari", df_v['nome'].tolist() if not df_v.empty else [])
-l_p = st.multiselect("📍 Luoghi", df_l['nome'].tolist() if not df_l.empty else [])
+# --- INTERFACCIA ---
+st.title("🐕 Sistema di Gestione Canile")
 
 tab_prog, tab_storico, tab_ana = st.tabs(["📅 Programma", "📚 Storico", "📋 Anagrafica"])
 
 with tab_prog:
-    # 1. INSERIMENTO MANUALE
-    with st.expander("✏️ Inserimento Manuale"):
-        col1, col2 = st.columns(2)
-        m_cane = col1.selectbox("Cane", ["-"] + c_p)
-        m_luo = col2.selectbox("Luogo", ["-"] + l_p)
-        m_vols = st.multiselect("Volontari", v_p)
-        m_ora = st.time_input("Ora Inizio", ora_i)
-        
-        if st.button("➕ Aggiungi"):
-            if m_cane != "-":
-                ora_start_dt = datetime.combine(data_t, m_ora)
-                ora_str = ora_start_dt.strftime('%H:%M')
-                
-                # Recupera info e calcola durata
-                info_cane = get_cane_info_completa(m_cane)
-                durata_min = parse_duration_string(info_cane.get('tempo', '30 min'))
-                ora_end_dt = ora_start_dt + timedelta(minutes=durata_min)
-                orario_display = f"{ora_start_dt.strftime('%H:%M')} - {ora_end_dt.strftime('%H:%M')}"
-
-                # Controllo sovrapposizioni
-                occupato = any(t["Cane"] == m_cane and t["Inizio_Sort"] == ora_str 
-                              for t in st.session_state.programma)
-                
-                if not occupato:
-                    entry = {
-                        "Orario": orario_display,
-                        "Cane": m_cane,
-                        "Volontario": ", ".join(m_vols) if m_vols else "Da assegnare",
-                        "Luogo": m_luo if m_luo != "-" else "Da assegnare",
-                        "Inizio_Sort": ora_str,
-                        # Info PDF
-                        "Cibo": info_cane.get('cibo', '-'),
-                        "Guinzaglieria": info_cane.get('guinzaglieria', '-'),
-                        "Strumenti": info_cane.get('strumenti', '-'),
-                        "Attività PDF": info_cane.get('attivita', '-'),
-                        "Note": info_cane.get('note', '-'),
-                        "Tempo PDF": info_cane.get('tempo', '-')
-                    }
-                    st.session_state.programma.append(entry)
-                    st.success("Turno aggiunto!")
-                    st.rerun()
-                else:
-                    st.error("Cane già impegnato in questo orario")
-
-    # 2. GENERAZIONE AUTOMATICA
-    c_btn1, c_btn2 = st.columns(2)
+    st.subheader("Creazione Programma Giornaliero")
     
-    if c_btn1.button("🤖 Genera Automatico", use_container_width=True):
-        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
-        start_dt = datetime.combine(data_t, ora_i)
-        end_dt = datetime.combine(data_t, ora_f)
-        pasti_dt = end_dt - timedelta(minutes=30) 
+    # 1. SELEZIONE DATA
+    col_data, col_reset = st.columns([3, 1])
+    with col_data:
+        data_t = st.date_input("📅 Seleziona data", datetime.today())
+    with col_reset:
+        st.write("")
+        if st.button("🔄 Reset", use_container_width=True):
+            st.session_state.programma = []
+            st.rerun()
+    
+    # 2. CARICAMENTO DATI
+    with st.spinner("Caricamento dati..."):
+        df_turni = load_gsheets("Turni")
+        df_cani = load_gsheets("Cani")
+        df_luoghi = load_gsheets("Luoghi")
         
-        manuali_esistenti = st.session_state.programma
-        st.session_state.programma = []
-        
-        # Briefing
-        st.session_state.programma.append({
-            "Orario": f"{start_dt.strftime('%H:%M')} - {(start_dt+timedelta(minutes=15)).strftime('%H:%M')}", 
-            "Cane": "TUTTI", "Volontario": "TUTTI", "Luogo": "Ufficio", 
-            "Inizio_Sort": start_dt.strftime('%H:%M'), "Attività PDF": "Briefing",
-            "Cibo": "-", "Guinzaglieria": "-", "Strumenti": "-", "Note": "-", "Tempo PDF": "-"
-        })
-
-        cani_gia_occupati = [m["Cane"] for m in manuali_esistenti]
-        cani_da_fare = [c for c in c_p if c not in cani_gia_occupati]
-        
-        curr_t = start_dt + timedelta(minutes=15)
-        
-        luoghi_auto = []
-        if not df_l.empty and 'automatico' in df_l.columns:
-             filtro = (df_l['nome'].isin(l_p)) & (df_l['automatico'].astype(str).str.lower().str.strip() == 'sì')
-             luoghi_auto = df_l[filtro]['nome'].tolist()
-        else: luoghi_auto = l_p.copy()
-
-        while cani_da_fare and curr_t < pasti_dt and luoghi_auto:
-            ora_attuale_str = curr_t.strftime('%H:%M')
-            
-            # Filtri base disponibilità
-            vols_impegnati = []
-            luoghi_impegnati = []
-            for m in manuali_esistenti:
-                if m["Inizio_Sort"] == ora_attuale_str:
-                    vols_impegnati.extend([v.strip() for v in m["Volontario"].split(",")])
-                    luoghi_impegnati.append(m["Luogo"])
-
-            vols_liberi = [v for v in v_p if v not in vols_impegnati]
-            campi_disp = [l for l in luoghi_auto if l not in luoghi_impegnati]
-            
-            n_cani = min(len(cani_da_fare), len(campi_disp))
-            max_durata_turno = 30
-            
-            if n_cani > 0 and vols_liberi:
-                for _ in range(n_cani):
-                    if not cani_da_fare or not vols_liberi or not campi_disp: break
-                    
-                    cane_ok = False
-                    tentativi = 0
-                    while not cane_ok and tentativi < len(cani_da_fare):
-                        cane = cani_da_fare[tentativi]
-                        
-                        # Recupera Info complete
-                        info_cane = get_cane_info_completa(cane)
-                        durata_min = parse_duration_string(info_cane.get('tempo', '30'))
-                        
-                        # Calcola fine turno specifico
-                        fine_turno = curr_t + timedelta(minutes=durata_min)
-                        orario_display = f"{curr_t.strftime('%H:%M')} - {fine_turno.strftime('%H:%M')}"
-                        
-                        # Trova campo compatibile
-                        campo_scelto = None
-                        for campo in campi_disp:
-                            if campo_valido_per_reattivita(cane, campo, st.session_state.programma + manuali_esistenti, ora_attuale_str, df_c, df_l):
-                                campo_scelto = campo
-                                break
-                        
-                        if campo_scelto:
-                            cani_da_fare.pop(tentativi)
-                            campi_disp.remove(campo_scelto)
-                            
-                            # *** ASSEGNAZIONE INTELLIGENTE BASATA SULLO STORICO ***
-                            v_scelto = get_volontario_piu_esperto(cane, vols_liberi)
-                            if v_scelto:
-                                vols_liberi.remove(v_scelto)
-                            else:
-                                v_scelto = "Da assegnare"
-                            
-                            st.session_state.programma.append({
-                                "Orario": orario_display,
-                                "Cane": cane,
-                                "Volontario": v_scelto,
-                                "Luogo": campo_scelto,
-                                "Inizio_Sort": ora_attuale_str,
-                                "Cibo": info_cane.get('cibo', '-'),
-                                "Guinzaglieria": info_cane.get('guinzaglieria', '-'),
-                                "Strumenti": info_cane.get('strumenti', '-'),
-                                "Attività PDF": info_cane.get('attivita', '-'),
-                                "Note": info_cane.get('note', '-'),
-                                "Tempo PDF": info_cane.get('tempo', '-')
-                            })
-                            
-                            if durata_min > max_durata_turno:
-                                max_durata_turno = durata_min
-                            
-                            cane_ok = True
-                        else:
-                            tentativi += 1
-            
-            curr_t += timedelta(minutes=max_durata_turno + 5)
-
-        st.session_state.programma.extend(manuali_esistenti)
-        
-        # Pasti
-        st.session_state.programma.append({
-            "Orario": f"{pasti_dt.strftime('%H:%M')} - {(pasti_dt+timedelta(minutes=30)).strftime('%H:%M')}", 
-            "Cane": "TUTTI", "Volontario": "TUTTI", "Luogo": "Box", 
-            "Inizio_Sort": pasti_dt.strftime('%H:%M'), "Attività PDF": "Pasti",
-            "Cibo": "-", "Guinzaglieria": "-", "Strumenti": "-", "Note": "-", "Tempo PDF": "-"
-        })
-        
+        # Caricamento PDF
+        conn = sqlite3.connect('canile.db')
+        df_pdf_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
         conn.close()
-        st.success("✅ Programma generato con assegnazione intelligente basata sullo storico!")
-        st.rerun()
-
-    if c_btn2.button("🗑️ Svuota", use_container_width=True):
-        st.session_state.programma = []
+        
+        if not df_pdf_db.empty:
+            df_pdf_db.set_index('nome', inplace=True)
+            df_pdf_db['durata_min'] = df_pdf_db['tempo'].apply(parse_duration_string)
+    
+    # Filtra turni per data
+    if not df_turni.empty and 'data' in df_turni.columns:
+        df_turni['data'] = pd.to_datetime(df_turni['data'], errors='coerce', dayfirst=True).dt.date
+        df_turni_day = df_turni[df_turni['data'] == data_t]
+        
+        if not df_turni_day.empty:
+            # Prepara informazioni turni
+            turni_info = []
+            for _, row in df_turni_day.iterrows():
+                cani = []
+                num_cani = 0
+                
+                for col in df_turni_day.columns:
+                    if col.startswith('cane') and pd.notna(row[col]) and str(row[col]).strip():
+                        cani.append(str(row[col]).strip())
+                        num_cani += 1
+                
+                turni_info.append({
+                    'inizio': row['inizio'],
+                    'volontario': row['volontario'],
+                    'cani': cani,
+                    'num_cani': num_cani
+                })
+            
+            # Genera programma
+            if st.button("🚀 Genera Programma", type="primary", use_container_width=True):
+                with st.spinner("Generazione in corso..."):
+                    programma = genera_programma(data_t, turni_info, df_luoghi, df_pdf_db)
+                    st.session_state.programma = programma
+                    st.success(f"✅ Programma generato: {len(programma)} turni")
+                st.rerun()
+        else:
+            st.warning(f"⚠️ Nessun turno programmato per il {data_t.strftime('%d/%m/%Y')}")
+    else:
+        st.error("❌ Impossibile caricare i dati dei turni")
+    
+    # Pulsante per ricaricare dati
+    if st.button("🔄 Ricarica dati da Google Sheets"):
         st.rerun()
 
     # 3. VISUALIZZAZIONE PROGRAMMA
@@ -512,12 +473,20 @@ with tab_storico:
     conn.close()
     
     if not df_storico.empty:
+        # **CORREZIONE: Converti la colonna 'data' in datetime**
+        df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce')
+        
+        # **CORREZIONE: Converti la colonna 'timestamp_salvataggio' in datetime**
+        df_storico['timestamp_salvataggio'] = pd.to_datetime(df_storico['timestamp_salvataggio'], errors='coerce')
+        
         # Filtri di ricerca
         st.write("### 🔍 Filtri di Ricerca")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            date_filter = st.multiselect("Data", df_storico['data'].unique())
+            # Converti le date uniche in stringhe per il multiselect
+            date_options = df_storico['data'].dt.strftime('%Y-%m-%d').unique()
+            date_filter = st.multiselect("Data", date_options)
         with col2:
             cane_filter = st.multiselect("Cane", df_storico['cane'].unique())
         with col3:
@@ -528,7 +497,8 @@ with tab_storico:
         # Applicazione filtri
         df_filtered = df_storico.copy()
         if date_filter:
-            df_filtered = df_filtered[df_filtered['data'].isin(date_filter)]
+            # Confronta le date convertendo entrambe in stringhe
+            df_filtered = df_filtered[df_filtered['data'].dt.strftime('%Y-%m-%d').isin(date_filter)]
         if cane_filter:
             df_filtered = df_filtered[df_filtered['cane'].isin(cane_filter)]
         if vol_filter:
