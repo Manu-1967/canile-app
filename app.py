@@ -59,14 +59,13 @@ def load_gsheets(sheet_name):
     except: return pd.DataFrame()
 
 def esporta_immagine(df):
-    # Regoliamo la larghezza in base al numero di colonne per non tagliare il testo
+    if df.empty: return None
     fig, ax = plt.subplots(figsize=(22, len(df)*0.9 + 2)) 
     ax.axis('off')
-    # Creazione tabella con allineamento a sinistra per le note lunghe
     tabla = ax.table(cellText=df.values, colLabels=df.columns, cellLoc='left', loc='center')
     tabla.auto_set_font_size(False)
     tabla.set_fontsize(9)
-    tabla.scale(1.0, 2.2) # Aumentata l'altezza delle celle per i testi lunghi
+    tabla.scale(1.0, 2.2) 
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
     return buf.getvalue()
@@ -75,35 +74,35 @@ def esporta_immagine(df):
 init_db()
 if 'programma' not in st.session_state: st.session_state.programma = []
 
-st.title("🐾 Programma Canile con Modifica Rapida")
+st.title("🐾 Programma Canile Pro")
 
 with st.sidebar:
-    st.header("📂 Caricamento PDF")
-    pdf_files = st.file_uploader("Trascina qui i file", accept_multiple_files=True, type="pdf")
-    if pdf_files and st.button("🔄 Aggiorna Database"):
+    st.header("📂 Importazione")
+    pdf_files = st.file_uploader("Carica PDF Cani", accept_multiple_files=True, type="pdf")
+    if pdf_files and st.button("Aggiorna Database"):
         for pdf in pdf_files:
             salva_anagrafica_db(parse_dog_pdf(pdf))
-        st.success("Dati PDF salvati!")
+        st.success("Database PDF aggiornato!")
     data_t = st.date_input("Data Turno", datetime.today())
 
 df_c = load_gsheets("Cani")
 df_v = load_gsheets("Volontari")
 df_l = load_gsheets("Luoghi")
 
-tab_prog, tab_ana = st.tabs(["📅 Gestione Turni", "📋 Database Cani"])
+tab_prog, tab_ana = st.tabs(["📅 Gestione Programma", "📋 Anagrafica PDF"])
 
 with tab_prog:
-    # --- AREA INSERIMENTO ---
-    with st.expander("➕ Aggiungi Nuovo Turno", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        c_sel = c1.selectbox("Cane", ["-"] + (df_c['nome'].tolist() if not df_c.empty else []))
-        v_sel = c2.multiselect("Volontari", df_v['nome'].tolist() if not df_v.empty else [])
-        l_sel = c3.selectbox("Luogo", ["-"] + (df_l['nome'].tolist() if not df_l.empty else []))
+    # --- AGGIUNTA TURNO ---
+    with st.expander("➕ Inserisci un nuovo turno"):
+        col1, col2, col3 = st.columns(3)
+        c_sel = col1.selectbox("Cane", ["-"] + (df_c['nome'].tolist() if not df_c.empty else []))
+        v_sel = col2.multiselect("Volontari", df_v['nome'].tolist() if not df_v.empty else [])
+        l_sel = col3.selectbox("Luogo", ["-"] + (df_l['nome'].tolist() if not df_l.empty else []))
         
-        c4, c5 = st.columns(2)
-        o_sel = c4.time_input("Ora Inizio", datetime.strptime("08:00", "%H:%M"))
+        col_t = st.columns(1)[0]
+        o_sel = col_t.time_input("Orario inizio", datetime.strptime("08:00", "%H:%M"))
         
-        if st.button("Inserisci Turno"):
+        if st.button("Aggiungi Cane al Programma"):
             if c_sel != "-":
                 info = get_info_cane(c_sel)
                 st.session_state.programma.append({
@@ -120,29 +119,34 @@ with tab_prog:
                 })
                 st.rerun()
 
-    # --- TABELLA EDITABILE ---
+    # --- VISUALIZZAZIONE E MODIFICA ---
     if st.session_state.programma:
-        st.subheader("📝 Modifica e Personalizza")
-        st.info("💡 Puoi cliccare su qualsiasi cella (Note, Cibo, ecc.) per modificare il testo manualmente.")
+        st.subheader("📝 Programma Attuale")
+        df_p = pd.DataFrame(st.session_state.programma).sort_values("Ora")
         
-        df_edit = pd.DataFrame(st.session_state.programma).sort_values("Ora")
-        
-        # st.data_editor permette la modifica manuale dei dati estratti
-        edited_df = st.data_editor(df_edit, use_container_width=True, hide_index=True)
-        
-        # Sincronizza le modifiche fatte a mano
+        # Editor per modifiche manuali dell'ultimo minuto
+        edited_df = st.data_editor(df_p, use_container_width=True, hide_index=True)
         st.session_state.programma = edited_df.to_dict('records')
-        
+
+        # --- AZIONI SULLE RIGHE ---
         st.divider()
-        col_del, col_down = st.columns([1, 1])
+        c_del, c_clear, c_save = st.columns([2, 1, 1])
         
-        if col_del.button("🗑️ Svuota Tutto"):
+        # Rimuovere una singola riga
+        cane_da_rimuovere = c_del.selectbox("❌ Seleziona cane da rimuovere:", ["-"] + edited_df['Cane'].tolist())
+        if c_del.button("Rimuovi riga selezionata"):
+            if cane_da_rimuovere != "-":
+                st.session_state.programma = [r for r in st.session_state.programma if r['Cane'] != cane_da_rimuovere]
+                st.rerun()
+
+        if c_clear.button("🗑️ Svuota Tutto"):
             st.session_state.programma = []
             st.rerun()
-            
-        # Generazione immagine con i dati (eventualmente modificati)
+
+        # Scaricamento immagine
         img_data = esporta_immagine(edited_df)
-        col_down.download_button("📸 Scarica per WhatsApp", data=img_data, file_name=f"programma_{data_t}.png", mime="image/png")
+        if img_data:
+            st.download_button("📸 Scarica Immagine WhatsApp", data=img_data, file_name=f"programma_{data_t}.png", mime="image/png")
 
 with tab_ana:
     conn = sqlite3.connect('canile.db')
