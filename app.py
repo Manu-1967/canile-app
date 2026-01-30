@@ -214,7 +214,7 @@ with st.sidebar:
             for pdf in pdf_files:
                 try:
                     dati = parse_dog_pdf(pdf)
-                    salva_anagrafica(dati)
+                    salva_anagrafica_db(dati)
                     successi += 1
                 except Exception as e:
                     st.error(f"Errore in {pdf.name}: {e}")
