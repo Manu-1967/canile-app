@@ -485,8 +485,8 @@ if st.session_state.programma:
                 st.success(f"✅ Salvati {record_salvati} turni nello storico del {data_t.strftime('%d/%m/%Y')}!")
                 st.info("💡 L'algoritmo di assegnazione automatica ora terrà conto di questi turni per dare priorità ai volontari più esperti con ogni cane.")
                 # Opzionalmente: svuoto il programma dopo il salvataggio
-                # st.session_state.programma = []
-                # st.rerun()
+                st.session_state.programma = []
+                st.rerun()
             else:
                 st.warning("⚠️ Nessun turno valido da salvare (solo turni speciali o senza cane).")
 else:
