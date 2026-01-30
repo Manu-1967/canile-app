@@ -542,15 +542,12 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
-    # Caricamento dati dallo storico DB con gestione errori
     conn = sqlite3.connect('canile.db')
     try:
-        # Verifica quali colonne esistono
         c = conn.cursor()
         c.execute("PRAGMA table_info(storico)")
         existing_columns = {row[1] for row in c.fetchall()}
         
-        # Costruisci la query in base alle colonne disponibili
         base_cols = ['data', 'inizio', 'cane', 'volontario', 'luogo']
         optional_cols = {
             'fine': 'inizio as fine',
@@ -566,22 +563,22 @@ with tab_storico:
             else:
                 select_parts.append(default)
         
-        query = f"""
-            SELECT {', '.join(select_parts)}
-            FROM storico 
-            ORDER BY data DESC, inizio ASC
-        """
-        df_storico = pd.read_sql_query(query, conn) 
-    # ... (codice precedente invariato fino a df_storico = pd.read_sql_query)
+        query = f"SELECT {', '.join(select_parts)} FROM storico ORDER BY data DESC, inizio ASC"
+        df_storico = pd.read_sql_query(query, conn)
+        
+    except Exception as e:
+        st.error(f"Errore nel caricamento dello storico: {e}")
+        df_storico = pd.DataFrame()
+    finally:
+        conn.close() # Chiude sempre la connessione
 
-if not df_storico.empty:
-    # --- PASSAGGIO FONDAMENTALE: Conversione tipi ---
-    # Convertiamo la colonna 'data' da stringa a oggetto datetime
-    df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce')
-    # Assicuriamoci che durata_minuti sia numerico
-    df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30)
-    
-    st.write("### 🔍 Filtri di Ricerca")
+    # Ora il blocco TRY è chiuso correttamente e possiamo usare IF
+    if not df_storico.empty:
+        # Convertiamo la data in formato datetime per evitare l'errore nel data_editor
+        df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce')
+        
+        st.write("### 🔍 Filtri di Ricerca")
+        # ... (il resto del tuo codice per i filtri e la visualizzazione)
     # ... (resto dei filtri)
 
     # All'interno del blocco 'show_edit_storico'
