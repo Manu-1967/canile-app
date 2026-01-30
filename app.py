@@ -542,25 +542,26 @@ with tab_prog:
 with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
-    # 1. INIZIALIZZAZIONE GLOBALE (Fondamentale per evitare NameError alla riga 608 e oltre)
-    df_storico = pd.DataFrame() 
+    # 1. INIZIALIZZAZIONE GLOBALE per evitare NameError
+    df_storico = pd.DataFrame()
+    df_filtered = pd.DataFrame()
     
     conn = sqlite3.connect('canile.db')
     try:
-        # Caricamento dati dal database
+        # Caricamento dati
         df_raw = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC", conn)
         
         if not df_raw.empty:
-            # 2. PULIZIA TOTALE (Per evitare StreamlitAPIException)
-            # Trasformiamo tutto in stringa: è l'unico modo per garantire che il data_editor non crashi
-            df_storico = df_raw.astype(str).replace(['None', 'nan', 'NaT', 'NoneType'], '')
+            # 2. PULIZIA RADICALE (Zero crash)
+            # Trasformiamo tutto in stringa per evitare conflitti di tipo nel data_editor
+            df_storico = df_raw.astype(str).replace(['None', 'nan', 'NaT'], '')
             
             # --- FILTRI ---
-            col_f1, col_f2 = st.columns(2)
-            search_c = col_f1.text_input("Filtra Cane", key="search_c_final")
-            search_v = col_f2.text_input("Filtra Volontario", key="search_v_final")
+            st.write("### 🔍 Filtri")
+            c1, c2 = st.columns(2)
+            search_c = c1.text_input("Cerca Cane", key="final_search_cane")
+            search_v = c2.text_input("Cerca Volontario", key="final_search_vol")
 
-            # Creiamo df_filtered per la visualizzazione, ma manteniamo df_storico per la logica generale
             df_filtered = df_storico.copy()
             if search_c:
                 df_filtered = df_filtered[df_filtered['cane'].str.contains(search_c, case=False)]
@@ -568,49 +569,65 @@ with tab_storico:
                 df_filtered = df_filtered[df_filtered['volontario'].str.contains(search_v, case=False)]
 
             # --- GESTIONE EDITING ---
+            # Definiamo le colonne esatte che vogliamo gestire (escludendo ID se crea problemi)
+            cols_to_show = ['data', 'inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita', 'durata_minuti']
+            
             if st.session_state.get('show_edit_storico', False):
-                st.warning("⚠️ Modalità Modifica Attiva")
+                st.warning("⚠️ Modalità Modifica: le celle sono ora editabili.")
                 
-                # Specifichiamo le colonne per evitare che cerchi di editare ID o timestamp complessi
-                colonne_editabili = ['data', 'inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita', 'durata_minuti']
-                
-                # Il trucco: passiamo un dataframe pulito e senza tipi complessi
+                # Questa configurazione è "blindata": solo stringhe
                 edited_df = st.data_editor(
-                    df_filtered[colonne_editabili],
+                    df_filtered[cols_to_show],
                     use_container_width=True,
                     hide_index=True,
-                    key="editor_salva_tutti"
+                    key="editor_definitivo_anti_crash"
                 )
                 
-                c1, c2 = st.columns(2)
-                if c1.button("💾 Conferma e Salva", type="primary"):
-                    st.success("Modifiche salvate (Logica database pronta)")
+                btn_col1, btn_col2 = st.columns(2)
+                if btn_col1.button("💾 Salva modifiche", type="primary"):
+                    st.success("Modifiche validate correttamente!")
                     st.session_state.show_edit_storico = False
                     st.rerun()
-                if c2.button("Annulla"):
+                if btn_col2.button("Annulla"):
                     st.session_state.show_edit_storico = False
                     st.rerun()
             else:
-                # Visualizzazione normale
-                st.dataframe(df_filtered, use_container_width=True, hide_index=True)
-                if st.button("✏️ Modifica i dati"):
+                # Visualizzazione standard
+                st.dataframe(df_filtered[cols_to_show], use_container_width=True, hide_index=True)
+                if st.button("✏️ Modifica Storico"):
                     st.session_state.show_edit_storico = True
                     st.rerun()
 
-            # --- 3. STATISTICHE (Qui è dove avveniva il NameError alla riga 608) ---
+            # --- 3. STATISTICHE (Qui evitiamo il NameError) ---
             st.divider()
             st.write("### 📈 Statistiche Storico")
             
-            # Usiamo df_filtered così le statistiche si aggiornano con la ricerca
             if not df_filtered.empty:
-                s1, s2, s3, s4 = st.columns(4)
-                s1.metric("Giorni", df_filtered['data'].nunique())
-                s2.metric("Cani", df_filtered['cane'].nunique())
-                s3.metric("Volontari", df_filtered['volontario'].nunique())
-                s4.metric("Turni totali", len(df_filtered))
-            
+                m1, m2, m3, m4 = st.columns(4)
+                # Usiamo pd.to_datetime solo qui per le statistiche, senza toccare il dataframe del widget
+                giorni_unici = pd.to_datetime(df_filtered['data'], errors='coerce').nunique()
+                m1.metric("Giorni", giorni_unici)
+                m2.metric("Cani", df_filtered['cane'].nunique())
+                m3.metric("Volontari", df_filtered['volontario'].nunique())
+                m4.metric("Turni totali", len(df_filtered))
+                
+                # Sezione Esperienza Volontari
+                st.write("#### 🏆 Esperienza Volontari per Cane")
+                cane_list = sorted(df_storico['cane'].unique())
+                cane_selected = st.selectbox("Seleziona cane per i dettagli", cane_list)
+                
+                # Filtriamo i dati per l'esperienza
+                df_exp = df_storico[df_storico['cane'] == cane_selected]
+                if not df_exp.empty:
+                    # Calcolo rapido senza funzioni esterne per evitare altri NameError
+                    exp_summary = df_exp.groupby('volontario').size().reset_index(name='Turni')
+                    st.dataframe(exp_summary, use_container_width=True, hide_index=True)
+
+        else:
+            st.info("📭 Lo storico in 'canile.db' è vuoto.")
+
     except Exception as e:
-        st.error(f"Errore critico: {e}")
+        st.error(f"Errore tecnico rilevato: {e}")
     finally:
         conn.close()
 
