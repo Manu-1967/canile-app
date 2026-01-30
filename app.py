@@ -7,7 +7,7 @@ import sqlite3
 import io
 
 """
-PROGRAMMA CANILE
+PROGRAMMA CANILE 
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Canile Soft v3", layout="centered")
