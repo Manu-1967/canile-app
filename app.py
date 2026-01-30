@@ -148,7 +148,7 @@ with st.sidebar:
 df_c = load_gsheets("Cani"); df_v = load_gsheets("Volontari"); df_l = load_gsheets("Luoghi")
 if 'programma' not in st.session_state: st.session_state.programma = []
 
-st.title("📱 Canile Soft")
+st.title(" 🐕 Programma Canile 🐕 ")
 
 # --- SELEZIONE RISORSE ---
 c_p = st.multiselect("🐕 Cani in turno", df_c['nome'].tolist() if not df_c.empty else [])
