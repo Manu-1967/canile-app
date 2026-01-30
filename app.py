@@ -120,6 +120,51 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
     
     return True
 
+def salva_turni_in_storico(programma, data):
+    """
+    Salva tutti i turni del programma giornaliero nello storico del database.
+    Ogni volontario viene salvato separatamente (se ci sono più volontari separati da '+').
+    
+    Args:
+        programma: lista di dict con i turni della giornata
+        data: data della giornata (datetime.date)
+    
+    Returns:
+        numero di record salvati
+    """
+    conn = sqlite3.connect('canile.db')
+    c = conn.cursor()
+    
+    data_str = data.strftime('%Y-%m-%d')
+    record_salvati = 0
+    
+    for turno in programma:
+        # Salto i turni speciali (Briefing, Pasti) e quelli senza cane specifico
+        if turno.get("Cane") in ["TUTTI", "Da assegnare", "-"]:
+            continue
+        
+        cane = turno.get("Cane", "")
+        orario = turno.get("Orario", "")
+        luogo = turno.get("Luogo", "")
+        volontari_str = turno.get("Volontario", "")
+        
+        # Separo i volontari (possono essere separati da ' + ')
+        volontari = [v.strip() for v in volontari_str.split('+') if v.strip()]
+        
+        # Salvo un record per ogni volontario
+        for volontario in volontari:
+            try:
+                c.execute("INSERT INTO storico (data, inizio, cane, volontario, luogo) VALUES (?, ?, ?, ?, ?)",
+                         (data_str, orario, cane, volontario, luogo))
+                record_salvati += 1
+            except Exception as e:
+                st.warning(f"Errore salvando turno {cane} - {volontario}: {str(e)}")
+    
+    conn.commit()
+    conn.close()
+    
+    return record_salvati
+
 
 init_db()
 
@@ -420,3 +465,29 @@ with tab_ana:
         st.info("Nessun dato in anagrafica. Carica i PDF dalla sidebar.")
     
     conn.close()
+
+# --- SEZIONE SALVATAGGIO IN STORICO ---
+st.divider()
+st.subheader("💾 Salvataggio Giornata")
+
+if st.session_state.programma:
+    st.info(f"📊 Turni programmati: **{len(st.session_state.programma)}** (verranno salvati solo i turni con cani specifici)")
+    
+    col_salva1, col_salva2 = st.columns([3, 1])
+    
+    with col_salva1:
+        st.write("Una volta completata la giornata, salva i turni nello storico per migliorare l'assegnazione automatica futura.")
+    
+    with col_salva2:
+        if st.button("✅ Conferma e Salva in Storico", type="primary", use_container_width=True):
+            record_salvati = salva_turni_in_storico(st.session_state.programma, data_t)
+            if record_salvati > 0:
+                st.success(f"✅ Salvati {record_salvati} turni nello storico del {data_t.strftime('%d/%m/%Y')}!")
+                st.info("💡 L'algoritmo di assegnazione automatica ora terrà conto di questi turni per dare priorità ai volontari più esperti con ogni cane.")
+                # Opzionalmente: svuoto il programma dopo il salvataggio
+                # st.session_state.programma = []
+                # st.rerun()
+            else:
+                st.warning("⚠️ Nessun turno valido da salvare (solo turni speciali o senza cane).")
+else:
+    st.info("📝 Crea prima un programma giornaliero per poterlo salvare nello storico.")
