@@ -59,6 +59,12 @@ def parse_dog_pdf(uploaded_file):
 
     return dati
 
+def carica_anagrafica():
+    conn = sqlite3.connect("canile.db")
+    df = pd.read_sql("SELECT * FROM anagrafica_cani", conn)
+    conn.close()
+    return df
+
 def salva_anagrafica_db(dati):
     conn = sqlite3.connect("canile.db")
     c = conn.cursor()
