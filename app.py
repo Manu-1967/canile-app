@@ -348,18 +348,40 @@ with tab_prog:
     
     # 2. CARICAMENTO DATI
     with st.spinner("Caricamento dati..."):
-        df_turni = load_gsheets("Turni")
-        df_cani = load_gsheets("Cani")
-        df_luoghi = load_gsheets("Luoghi")
+        try:
+            df_turni = load_gsheets("Turni")
+            df_cani = load_gsheets("Cani")
+            df_luoghi = load_gsheets("Luoghi")
+            
+            # Debug info
+            st.success(f"✅ Dati caricati: Turni={len(df_turni)}, Cani={len(df_cani)}, Luoghi={len(df_luoghi)}")
+            
+            if df_turni.empty or df_cani.empty or df_luoghi.empty:
+                st.error("❌ Errore nel caricamento dei dati da Google Sheets. Verifica la connessione o i permessi.")
+                st.info("💡 Controlla che il foglio Google sia pubblico o accessibile")
+                st.stop()
+            
+        except Exception as e:
+            st.error(f"❌ Errore nel caricamento dei dati: {e}")
+            st.info("💡 Verifica la connessione internet e che l'URL del Google Sheet sia corretto")
+            st.stop()
         
         # Caricamento PDF
-        conn = sqlite3.connect('canile.db')
-        df_pdf_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
-        conn.close()
-        
-        if not df_pdf_db.empty:
-            df_pdf_db.set_index('nome', inplace=True)
-            df_pdf_db['durata_min'] = df_pdf_db['tempo'].apply(parse_duration_string)
+        try:
+            conn = sqlite3.connect('canile.db')
+            df_pdf_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
+            conn.close()
+            
+            if not df_pdf_db.empty:
+                df_pdf_db.set_index('nome', inplace=True)
+                df_pdf_db['durata_min'] = df_pdf_db['tempo'].apply(parse_duration_string)
+                st.info(f"📋 Anagrafica cani: {len(df_pdf_db)} cani caricati")
+            else:
+                st.warning("⚠️ Nessuna anagrafica cani nel database")
+                df_pdf_db = pd.DataFrame()
+        except Exception as e:
+            st.warning(f"⚠️ Errore caricamento anagrafica: {e}")
+            df_pdf_db = pd.DataFrame()
     
     # Filtra turni per data
     if not df_turni.empty and 'data' in df_turni.columns:
@@ -464,20 +486,30 @@ with tab_storico:
     st.subheader("📚 Gestione Storico Programmi")
     
     # Caricamento dati dallo storico DB
-    conn = sqlite3.connect('canile.db')
-    df_storico = pd.read_sql_query("""
-        SELECT data, inizio, fine, cane, volontario, luogo, attivita, durata_minuti, timestamp_salvataggio
-        FROM storico 
-        ORDER BY data DESC, inizio ASC
-    """, conn)
-    conn.close()
+    try:
+        conn = sqlite3.connect('canile.db')
+        df_storico = pd.read_sql_query("""
+            SELECT data, inizio, fine, cane, volontario, luogo, attivita, durata_minuti, timestamp_salvataggio
+            FROM storico 
+            ORDER BY data DESC, inizio ASC
+        """, conn)
+        conn.close()
+    except Exception as e:
+        st.error(f"Errore nel caricamento dello storico: {e}")
+        df_storico = pd.DataFrame()
     
     if not df_storico.empty:
         # **CORREZIONE: Converti la colonna 'data' in datetime**
-        df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce')
+        try:
+            df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce')
+        except:
+            pass
         
         # **CORREZIONE: Converti la colonna 'timestamp_salvataggio' in datetime**
-        df_storico['timestamp_salvataggio'] = pd.to_datetime(df_storico['timestamp_salvataggio'], errors='coerce')
+        try:
+            df_storico['timestamp_salvataggio'] = pd.to_datetime(df_storico['timestamp_salvataggio'], errors='coerce')
+        except:
+            pass
         
         # Filtri di ricerca
         st.write("### 🔍 Filtri di Ricerca")
