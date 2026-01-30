@@ -544,96 +544,62 @@ with tab_storico:
     
     conn = sqlite3.connect('canile.db')
     try:
-        # 1. Caricamento dati grezzi
-        df_storico = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC, inizio ASC", conn)
+        # 1. Caricamento pulito
+        df_raw = pd.read_sql_query("SELECT * FROM storico", conn)
         
-        if not df_storico.empty:
-            # --- PULIZIA DATI "BLINDATA" PER DATA_EDITOR ---
-            
-            # Convertiamo la colonna data: prima in datetime e poi forzatamente in date
-            df_storico['data'] = pd.to_datetime(df_storico['data'], errors='coerce').dt.date
-            
-            # Assicuriamoci che durata_minuti sia un intero puro (non float con .0)
-            df_storico['durata_minuti'] = pd.to_numeric(df_storico['durata_minuti'], errors='coerce').fillna(30).astype(int)
-            
-            # Riempiamo i valori nulli nelle stringhe per evitare errori di tipo
-            string_cols = ['inizio', 'fine', 'cane', 'volontario', 'luogo', 'attivita']
-            for col in string_cols:
-                if col in df_storico.columns:
-                    df_storico[col] = df_storico[col].astype(str).replace('None', '-').replace('nan', '-')
+        if not df_raw.empty:
+            # --- TRATTAMENTO D'URTO PER I TIPI DI DATI ---
+            df_editor = df_raw.copy()
+
+            # Forziamo TUTTE le colonne a stringa inizialmente per evitare NaN/None
+            for col in df_editor.columns:
+                df_editor[col] = df_editor[col].astype(str).replace(['None', 'nan', 'NaT'], '')
+
+            # Trasformiamo SOLO la colonna data in un formato che DateColumn accetta (datetime.date)
+            # Se la conversione fallisce, mettiamo la data di oggi invece di un valore nullo
+            df_editor['data'] = pd.to_datetime(df_editor['data'], errors='coerce').dt.date
+            df_editor['data'] = df_editor['data'].fillna(datetime.today().date())
+
+            # Assicuriamoci che durata_minuti sia numerico
+            if 'durata_minuti' in df_editor.columns:
+                df_editor['durata_minuti'] = pd.to_numeric(df_editor['durata_minuti'], errors='coerce').fillna(30).astype(int)
 
             # --- FILTRI ---
-            st.write("### 🔍 Filtri di Ricerca")
-            col_f1, col_f2 = st.columns(2)
-            search_cane = col_f1.text_input("Cerca Cane")
-            search_vol = col_f2.text_input("Cerca Volontario")
-
-            df_filtered = df_storico.copy()
+            search_cane = st.text_input("Filtra per cane", "")
             if search_cane:
-                df_filtered = df_filtered[df_filtered['cane'].str.contains(search_cane, case=False)]
-            if search_vol:
-                df_filtered = df_filtered[df_filtered['volontario'].str.contains(search_vol, case=False)]
+                df_editor = df_editor[df_editor['cane'].str.contains(search_cane, case=False)]
 
-            # --- CONFIGURAZIONE COLONNE ---
-            # Nota: Usiamo TextColumn per tutto ciò che non è strettamente una data o un numero
-            config_colonne = {
-                "id": None,
-                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                "inizio": st.column_config.TextColumn("Inizio"),
-                "fine": st.column_config.TextColumn("Fine"),
-                "cane": st.column_config.TextColumn("Cane"),
-                "volontario": st.column_config.TextColumn("Volontario"),
-                "luogo": st.column_config.TextColumn("Luogo"),
-                "attivita": st.column_config.TextColumn("Attività"),
-                "durata_minuti": st.column_config.NumberColumn("Minuti"),
-                "timestamp_salvataggio": st.column_config.TextColumn("Timestamp")
-            }
-
-            # --- MODALITÀ MODIFICA VS VISUALIZZAZIONE ---
+            # --- IL DATA EDITOR ---
             if st.session_state.get('show_edit_storico', False):
-                st.warning("⚠️ Modalità modifica attiva")
+                st.warning("⚠️ Se l'errore persiste, il problema è nel formato della colonna 'data'.")
                 
-                # Usiamo un try-except specifico per il widget per diagnosticare eventuali incompatibilità residue
-                try:
-                    edited_df = st.data_editor(
-                        df_filtered,
-                        use_container_width=True,
-                        hide_index=True,
-                        num_rows="dynamic",
-                        column_config=config_colonne,
-                        key="editor_storico_v4"
-                    )
-                    
-                    col_save, col_cancel = st.columns(2)
-                    with col_save:
-                        if st.button("💾 Salva modifiche", type="primary"):
-                            # Per salvare davvero nel DB servirebbe una logica di UPDATE/DELETE
-                            st.success("Modifiche validate! (Logica di salvataggio DB da implementare)")
-                            st.session_state.show_edit_storico = False
-                            st.rerun()
-                    with col_cancel:
-                        if st.button("❌ Annulla"):
-                            st.session_state.show_edit_storico = False
-                            st.rerun()
-                except Exception as e_widget:
-                    st.error("Errore critico nel widget di modifica. Probabile formato dati non supportato.")
-                    st.info(f"Dettaglio tecnico: {e_widget}")
+                # Configurazione minima: se crasha ancora, prova a commentare "data" o "durata_minuti"
+                edited_df = st.data_editor(
+                    df_editor,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="data_editor_final_debug",
+                    column_config={
+                        "id": None, # Nascondi ID se esiste
+                        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "durata_minuti": st.column_config.NumberColumn("Minuti"),
+                        "inizio": st.column_config.TextColumn("Inizio"),
+                        "fine": st.column_config.TextColumn("Fine"),
+                        "timestamp_salvataggio": None # Nascondi per ora
+                    }
+                )
+                
+                if st.button("Annulla Modifica"):
+                    st.session_state.show_edit_storico = False
+                    st.rerun()
             else:
-                st.dataframe(df_filtered, use_container_width=True, hide_index=True, column_config=config_colonne)
-
-            # --- STATISTICHE ---
-            st.divider()
-            st.write("### 📈 Statistiche")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Turni totali", len(df_filtered))
-            c2.metric("Cani unici", df_filtered['cane'].nunique())
-            c3.metric("Volontari", df_filtered['volontario'].nunique())
-
-        else:
-            st.info("Storico vuoto.")
+                st.dataframe(df_editor, use_container_width=True, hide_index=True)
+                if st.button("✏️ Attiva Modifica"):
+                    st.session_state.show_edit_storico = True
+                    st.rerun()
 
     except Exception as e:
-        st.error(f"Errore generale: {e}")
+        st.error(f"Errore di sistema: {e}")
     finally:
         conn.close()
     
