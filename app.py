@@ -129,7 +129,9 @@ def genera_excel_programma(programma, data_turno):
     df = pd.DataFrame(programma)
     
     # Riordina le colonne
-    cols_order = ["Orario", "Cane", "Volontario", "Luogo", "Tipo", "CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
+    cols_order = ["Orario", "Cane", "Colore_Cane", "Volontario", "Colore_Volontario", "Compatibilità", "Luogo", "Tipo", "CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
+    # Usa solo le colonne che esistono
+    cols_order = [c for c in cols_order if c in df.columns]
     df = df[cols_order]
     
     file_excel = f"programma_turno_{data_turno.strftime('%Y%m%d')}.xlsx"
@@ -178,9 +180,71 @@ def load_gsheets(sheet_name):
             if 'reattività' not in df.columns: 
                 df['reattività'] = 0
             df['reattività'] = pd.to_numeric(df['reattività'], errors='coerce').fillna(0)
+            # Aggiungi colonna colore se non presente
+            if 'colore' not in df.columns:
+                df['colore'] = 'verde'  # default
+            df['colore'] = df['colore'].str.lower().str.strip()
+        if sheet_name == "Volontari":
+            # Aggiungi colonna colore se non presente
+            if 'colore' not in df.columns:
+                df['colore'] = 'verde'  # default
+            df['colore'] = df['colore'].str.lower().str.strip()
         return df.dropna(how='all')
     except:
         return pd.DataFrame()
+
+def get_livello_colore(colore):
+    """
+    Restituisce il livello numerico del colore.
+    Scala: nero (4) > rosso (3) > arancione (2) > verde (1)
+    """
+    livelli = {
+        'nero': 4,
+        'rosso': 3,
+        'arancione': 2,
+        'verde': 1
+    }
+    return livelli.get(colore.lower().strip(), 1)  # default verde se non riconosciuto
+
+def verifica_compatibilita_colore(colore_volontario, colore_cane):
+    """
+    Verifica se un volontario può gestire un cane in base ai colori.
+    Regola: Il volontario può gestire cani del suo stesso livello o inferiore.
+    
+    Scala volontari (dal più esperto al principiante):
+    - Nero (4): può gestire tutti (nero, rosso, arancione, verde)
+    - Rosso (3): può gestire rosso, arancione, verde
+    - Arancione (2): può gestire arancione, verde
+    - Verde (1): può gestire solo verde
+    
+    Returns:
+        tuple: (bool compatibile, str messaggio)
+    """
+    livello_vol = get_livello_colore(colore_volontario)
+    livello_cane = get_livello_colore(colore_cane)
+    
+    compatibile = livello_vol >= livello_cane
+    
+    if compatibile:
+        messaggio = "✅ OK"
+    else:
+        messaggio = f"⚠️ INCOMPATIBILE: serve volontario {colore_cane} o superiore"
+    
+    return compatibile, messaggio
+
+def get_colore_cane(nome_cane, df_cani):
+    """Restituisce il colore di un cane."""
+    if df_cani.empty or 'colore' not in df_cani.columns:
+        return 'verde'  # default
+    riga = df_cani[df_cani['nome'] == nome_cane]
+    return riga.iloc[0]['colore'] if not riga.empty else 'verde'
+
+def get_colore_volontario(nome_volontario, df_volontari):
+    """Restituisce il colore/livello di un volontario."""
+    if df_volontari.empty or 'colore' not in df_volontari.columns:
+        return 'verde'  # default
+    riga = df_volontari[df_volontari['nome'] == nome_volontario]
+    return riga.iloc[0]['colore'] if not riga.empty else 'verde'
 
 def get_reattivita_cane(nome_cane, df_cani):
     """Restituisce il livello di reattività di un cane."""
@@ -267,10 +331,54 @@ def salva_programma_nel_db(programma, data_sel):
     conn.commit()
     conn.close()
 
+def trova_volontario_compatibile(cane, volontari_liberi, df_cani, df_volontari, conn):
+    """
+    Trova il miglior volontario compatibile per un cane.
+    Restituisce: (volontario, colore_vol, compatibile, messaggio)
+    """
+    colore_cane = get_colore_cane(cane, df_cani)
+    
+    # Lista di volontari con score di compatibilità
+    candidati = []
+    
+    for vol in volontari_liberi:
+        colore_vol = get_colore_volontario(vol, df_volontari)
+        compatibile, msg = verifica_compatibilita_colore(colore_vol, colore_cane)
+        
+        # Calcola score storico
+        score_storico = conn.execute(
+            "SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", 
+            (cane, vol)
+        ).fetchone()[0]
+        
+        candidati.append({
+            'nome': vol,
+            'colore': colore_vol,
+            'compatibile': compatibile,
+            'messaggio': msg,
+            'score_storico': score_storico,
+            'livello': get_livello_colore(colore_vol)
+        })
+    
+    # Ordina: prima compatibili, poi per storico, poi per livello più alto
+    candidati.sort(key=lambda x: (
+        not x['compatibile'],  # False prima di True (compatibili prima)
+        -x['score_storico'],   # Score storico decrescente
+        -x['livello']          # Livello decrescente
+    ))
+    
+    if candidati:
+        migliore = candidati[0]
+        return migliore['nome'], migliore['colore'], migliore['compatibile'], migliore['messaggio']
+    
+    return None, None, False, "Nessun volontario disponibile"
+
 # Inizializzazione DB e sessione
 init_db()
 if 'programma' not in st.session_state: 
     st.session_state.programma = []
+if 'abbinamenti_non_compatibili' not in st.session_state:
+    st.session_state.abbinamenti_non_compatibili = []
 
 # --- INTERFACCIA ---
 st.title("🐾 Programma Canile 🐕")
@@ -332,6 +440,20 @@ with st.sidebar:
                 st.text(f"• {nome}")
     else:
         st.warning("⚠️ Nessun cane in anagrafica! Carica i PDF.")
+    
+    st.divider()
+    
+    # Legenda colori
+    st.subheader("🎨 Legenda Colori")
+    st.markdown("""
+    **Volontari** (esperienza):
+    - ⚫ **Nero**: Molto esperto
+    - 🔴 **Rosso**: Esperto
+    - 🟠 **Arancione**: Base
+    - 🟢 **Verde**: Principiante
+    
+    **Regola**: Il volontario può gestire cani del suo livello o inferiore
+    """)
 
 # Carica dati da Google Sheets
 df_c = load_gsheets("Cani")
@@ -339,7 +461,7 @@ df_v = load_gsheets("Volontari")
 df_l = load_gsheets("Luoghi")
 
 # Tabs principali
-tab_prog, tab_ana, tab_stats = st.tabs(["📅 Programma", "📋 Anagrafica Cani", "📊 Statistiche"])
+tab_prog, tab_ana, tab_stats, tab_colori = st.tabs(["📅 Programma", "📋 Anagrafica Cani", "📊 Statistiche", "🎨 Gestione Colori"])
 
 with tab_prog:
     st.header("Pianificazione Turni")
@@ -354,19 +476,55 @@ with tab_prog:
         m_luo = col2.selectbox("Seleziona Luogo", ["-"] + l_p)
         m_vols = st.multiselect("Seleziona Volontari", v_p)
         m_ora = st.time_input("Orario Inizio", ora_i)
+        
+        # Mostra controllo compatibilità in tempo reale
+        if m_cane != "-" and m_vols:
+            st.markdown("**Controllo Compatibilità:**")
+            colore_cane = get_colore_cane(m_cane, df_c)
+            st.info(f"🐕 Cane '{m_cane}': livello **{colore_cane.upper()}**")
+            
+            for vol in m_vols:
+                colore_vol = get_colore_volontario(vol, df_v)
+                compatibile, msg = verifica_compatibilita_colore(colore_vol, colore_cane)
+                if compatibile:
+                    st.success(f"👤 {vol} ({colore_vol.upper()}): {msg}")
+                else:
+                    st.error(f"👤 {vol} ({colore_vol.upper()}): {msg}")
+        
         if st.button("➕ Aggiungi Turno Manuale"):
             if m_cane != "-" and m_luo != "-" and m_vols:
                 # Recupera dati anagrafica del cane
                 ana_data = get_anagrafica_cane(m_cane)
                 
+                # Verifica compatibilità colori
+                colore_cane = get_colore_cane(m_cane, df_c)
+                incompatibilita = []
+                
+                for vol in m_vols:
+                    colore_vol = get_colore_volontario(vol, df_v)
+                    compatibile, msg = verifica_compatibilita_colore(colore_vol, colore_cane)
+                    if not compatibile:
+                        incompatibilita.append(f"{vol} ({colore_vol})")
+                
                 # Verifica se il cane è in anagrafica
                 if ana_data["cibo"] == "N/D":
                     st.warning(f"⚠️ Il cane '{m_cane}' non ha un'anagrafica PDF caricata. Carica il PDF dalla sidebar.")
                 
+                # Mostra warning se ci sono incompatibilità
+                if incompatibilita:
+                    st.warning(f"⚠️ ATTENZIONE: I seguenti volontari NON sono compatibili con il cane {m_cane} ({colore_cane}): {', '.join(incompatibilita)}")
+                
+                volontari_str = ", ".join(m_vols)
+                colori_vol_str = ", ".join([get_colore_volontario(v, df_v) for v in m_vols])
+                compatibilita_str = "⚠️ INCOMPATIBILE" if incompatibilita else "✅ OK"
+                
                 st.session_state.programma.append({
                     "Orario": m_ora.strftime('%H:%M'), 
-                    "Cane": m_cane, 
-                    "Volontario": ", ".join(m_vols), 
+                    "Cane": m_cane,
+                    "Colore_Cane": colore_cane.upper(),
+                    "Volontario": volontari_str, 
+                    "Colore_Volontario": colori_vol_str.upper(),
+                    "Compatibilità": compatibilita_str,
                     "Luogo": m_luo, 
                     "Tipo": "Manuale",
                     "Inizio_Sort": m_ora.strftime('%H:%M'),
@@ -377,7 +535,11 @@ with tab_prog:
                     "NOTE": ana_data["note"],
                     "TEMPO": ana_data["tempo"]
                 })
-                st.success(f"✅ Turno aggiunto: {m_cane} alle {m_ora.strftime('%H:%M')}")
+                
+                if incompatibilita:
+                    st.error(f"❌ Turno aggiunto con INCOMPATIBILITÀ: {m_cane} alle {m_ora.strftime('%H:%M')}")
+                else:
+                    st.success(f"✅ Turno aggiunto: {m_cane} alle {m_ora.strftime('%H:%M')}")
                 st.rerun()
             else:
                 st.warning("⚠️ Seleziona cane, luogo e almeno un volontario")
@@ -403,11 +565,17 @@ with tab_prog:
         
         manuali = [r for r in st.session_state.programma if r.get("Tipo") == "Manuale"]
         
+        # Reset lista abbinamenti non compatibili
+        st.session_state.abbinamenti_non_compatibili = []
+        
         # Briefing iniziale (senza dati anagrafica perché è per tutti)
         st.session_state.programma = [{
             "Orario": start_dt.strftime('%H:%M'), 
-            "Cane": "TUTTI", 
-            "Volontario": "TUTTI", 
+            "Cane": "TUTTI",
+            "Colore_Cane": "",
+            "Volontario": "TUTTI",
+            "Colore_Volontario": "",
+            "Compatibilità": "",
             "Luogo": "Ufficio", 
             "Tipo": "Briefing", 
             "Inizio_Sort": start_dt.strftime('%H:%M'),
@@ -437,28 +605,46 @@ with tab_prog:
                         campo_scelto = l_liberi.pop(0)
                         cani_restanti.pop(idx)
                         
-                        v_scores = [(v, conn.execute("SELECT COUNT(*) FROM storico WHERE cane=? AND volontario=?", (cane, v)).fetchone()[0]) for v in v_liberi]
-                        v_scores.sort(key=lambda x: x[1], reverse=True)
-                        lead = v_scores[0][0]
-                        v_liberi.remove(lead)
+                        # Trova volontario compatibile con controllo colori
+                        volontario_scelto, colore_vol, compatibile, msg = trova_volontario_compatibile(
+                            cane, v_liberi, df_c, df_v, conn
+                        )
                         
-                        # Recupera dati anagrafica del cane
-                        ana_data = get_anagrafica_cane(cane)
-                        
-                        st.session_state.programma.append({
-                            "Orario": ora_s, 
-                            "Cane": cane, 
-                            "Volontario": lead, 
-                            "Luogo": campo_scelto, 
-                            "Tipo": "Auto", 
-                            "Inizio_Sort": ora_s,
-                            "CIBO": ana_data["cibo"],
-                            "GUINZAGLIERIA": ana_data["guinzaglieria"],
-                            "STRUMENTI": ana_data["strumenti"],
-                            "ATTIVITÀ": ana_data["attivita"],
-                            "NOTE": ana_data["note"],
-                            "TEMPO": ana_data["tempo"]
-                        })
+                        if volontario_scelto:
+                            v_liberi.remove(volontario_scelto)
+                            
+                            # Recupera dati anagrafica del cane
+                            ana_data = get_anagrafica_cane(cane)
+                            colore_cane = get_colore_cane(cane, df_c)
+                            
+                            # Traccia abbinamenti non compatibili
+                            if not compatibile:
+                                st.session_state.abbinamenti_non_compatibili.append({
+                                    'orario': ora_s,
+                                    'cane': cane,
+                                    'colore_cane': colore_cane,
+                                    'volontario': volontario_scelto,
+                                    'colore_volontario': colore_vol,
+                                    'messaggio': msg
+                                })
+                            
+                            st.session_state.programma.append({
+                                "Orario": ora_s, 
+                                "Cane": cane,
+                                "Colore_Cane": colore_cane.upper(),
+                                "Volontario": volontario_scelto,
+                                "Colore_Volontario": colore_vol.upper(),
+                                "Compatibilità": "✅ OK" if compatibile else "⚠️ INCOMPATIBILE",
+                                "Luogo": campo_scelto, 
+                                "Tipo": "Auto", 
+                                "Inizio_Sort": ora_s,
+                                "CIBO": ana_data["cibo"],
+                                "GUINZAGLIERIA": ana_data["guinzaglieria"],
+                                "STRUMENTI": ana_data["strumenti"],
+                                "ATTIVITÀ": ana_data["attivita"],
+                                "NOTE": ana_data["note"],
+                                "TEMPO": ana_data["tempo"]
+                            })
                         break
             curr_t += timedelta(minutes=45)
         
@@ -467,8 +653,11 @@ with tab_prog:
         # Pasti finali (senza dati anagrafica perché è per tutti)
         st.session_state.programma.append({
             "Orario": pasti_dt.strftime('%H:%M'), 
-            "Cane": "TUTTI", 
-            "Volontario": "TUTTI", 
+            "Cane": "TUTTI",
+            "Colore_Cane": "",
+            "Volontario": "TUTTI",
+            "Colore_Volontario": "",
+            "Compatibilità": "",
             "Luogo": "Box", 
             "Tipo": "Pasti", 
             "Inizio_Sort": pasti_dt.strftime('%H:%M'),
@@ -480,38 +669,98 @@ with tab_prog:
             "TEMPO": ""
         })
         conn.close()
-        st.success("✅ Programma generato automaticamente")
+        
+        # Mostra avviso se ci sono incompatibilità
+        if st.session_state.abbinamenti_non_compatibili:
+            st.warning(f"⚠️ ATTENZIONE: {len(st.session_state.abbinamenti_non_compatibili)} abbinamenti NON compatibili rilevati!")
+        else:
+            st.success("✅ Programma generato automaticamente - Tutti gli abbinamenti sono compatibili!")
+        
         st.rerun()
 
     if c2.button("💾 Conferma e Salva Storico", type="primary", use_container_width=True):
         if st.session_state.programma:
-            salva_programma_nel_db(st.session_state.programma, data_t)
-            st.success("✅ Programma salvato con successo nello storico!")
+            # Controlla se ci sono incompatibilità
+            incompatibili = [t for t in st.session_state.programma if t.get("Compatibilità") == "⚠️ INCOMPATIBILE"]
+            
+            if incompatibili:
+                st.error(f"⚠️ ATTENZIONE: Ci sono {len(incompatibili)} abbinamenti incompatibili nel programma!")
+                with st.expander("🔍 Visualizza abbinamenti incompatibili"):
+                    for t in incompatibili:
+                        st.warning(f"⏰ {t['Orario']} - 🐕 {t['Cane']} ({t['Colore_Cane']}) + 👤 {t['Volontario']} ({t['Colore_Volontario']})")
+                
+                if st.button("✅ Conferma comunque e salva", type="primary"):
+                    salva_programma_nel_db(st.session_state.programma, data_t)
+                    st.success("✅ Programma salvato con successo nello storico (con incompatibilità)!")
+            else:
+                salva_programma_nel_db(st.session_state.programma, data_t)
+                st.success("✅ Programma salvato con successo nello storico!")
         else:
             st.warning("⚠️ Nessun programma da salvare")
 
     if c3.button("🗑️ Svuota Tutto", use_container_width=True):
         st.session_state.programma = []
+        st.session_state.abbinamenti_non_compatibili = []
         st.success("✅ Programma svuotato")
         st.rerun()
 
     st.divider()
+    
+    # Mostra alert per abbinamenti non compatibili
+    if st.session_state.abbinamenti_non_compatibili:
+        st.error(f"⚠️ ATTENZIONE: {len(st.session_state.abbinamenti_non_compatibili)} ABBINAMENTI NON COMPATIBILI!")
+        
+        with st.expander("🚨 Dettagli Incompatibilità - RICHIEDE APPROVAZIONE", expanded=True):
+            for abb in st.session_state.abbinamenti_non_compatibili:
+                st.warning(f"""
+                **Orario:** {abb['orario']}  
+                **Cane:** {abb['cane']} - Livello: {abb['colore_cane'].upper()} 🐕  
+                **Volontario:** {abb['volontario']} - Livello: {abb['colore_volontario'].upper()} 👤  
+                **Problema:** {abb['messaggio']}
+                """)
+            
+            st.markdown("---")
+            st.info("💡 **Opzioni:**")
+            st.markdown("""
+            1. **Riassegnare manualmente** i volontari incompatibili usando 'Inserimento Manuale Turno'
+            2. **Aggiungere volontari** con livelli adeguati alla selezione
+            3. **Confermare comunque** cliccando su 'Conferma e Salva Storico' (sconsigliato)
+            """)
 
     if st.session_state.programma:
         st.subheader("📋 Programma Corrente")
         df_p = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
+        
         # Riordina le colonne per una migliore visualizzazione
-        cols_order = ["Orario", "Cane", "Volontario", "Luogo", "Tipo", "CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
+        cols_order = ["Orario", "Cane", "Colore_Cane", "Volontario", "Colore_Volontario", "Compatibilità", "Luogo", "Tipo", "CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
+        cols_order = [c for c in cols_order if c in df_p.columns]
         df_p_display = df_p[cols_order]
         
+        # Formatta le celle con colori di sfondo
+        def highlight_compatibility(val):
+            if val == "⚠️ INCOMPATIBILE":
+                return 'background-color: #ffcccc; font-weight: bold;'
+            elif val == "✅ OK":
+                return 'background-color: #ccffcc;'
+            return ''
+        
+        # Applica lo stile
+        styled_df = df_p_display.style.applymap(
+            highlight_compatibility, 
+            subset=['Compatibilità'] if 'Compatibilità' in df_p_display.columns else []
+        )
+        
         st.dataframe(
-            df_p_display, 
+            styled_df, 
             use_container_width=True, 
             hide_index=True,
             column_config={
                 "Orario": st.column_config.TextColumn("Orario", width="small"),
                 "Cane": st.column_config.TextColumn("Cane", width="medium"),
+                "Colore_Cane": st.column_config.TextColumn("🎨 Livello Cane", width="small"),
                 "Volontario": st.column_config.TextColumn("Volontario", width="medium"),
+                "Colore_Volontario": st.column_config.TextColumn("🎨 Livello Vol.", width="small"),
+                "Compatibilità": st.column_config.TextColumn("Compatibilità", width="medium"),
                 "Luogo": st.column_config.TextColumn("Luogo", width="medium"),
                 "Tipo": st.column_config.TextColumn("Tipo", width="small"),
                 "CIBO": st.column_config.TextColumn("CIBO", width="medium"),
@@ -522,6 +771,18 @@ with tab_prog:
                 "TEMPO": st.column_config.TextColumn("TEMPO", width="small")
             }
         )
+        
+        # Statistiche rapide
+        st.divider()
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+        
+        turni_cani = [t for t in st.session_state.programma if t['Cane'] not in ['TUTTI', 'Da assegnare']]
+        incompatibili_count = len([t for t in turni_cani if t.get('Compatibilità') == '⚠️ INCOMPATIBILE'])
+        compatibili_count = len([t for t in turni_cani if t.get('Compatibilità') == '✅ OK'])
+        
+        col_stat1.metric("Turni Totali", len(turni_cani))
+        col_stat2.metric("✅ Compatibili", compatibili_count)
+        col_stat3.metric("⚠️ Incompatibili", incompatibili_count)
         
         # Pulsante per esportare il programma
         st.divider()
@@ -641,3 +902,107 @@ with tab_stats:
         st.warning("⚠️ Nessun dato presente per le date selezionate.")
     
     conn.close()
+
+with tab_colori:
+    st.header("🎨 Gestione Colori Cani e Volontari")
+    
+    st.markdown("""
+    ### Sistema di Compatibilità Colori
+    
+    **Livelli di Esperienza Volontari:**
+    - ⚫ **Nero**: Molto esperto - può gestire TUTTI i cani (nero, rosso, arancione, verde)
+    - 🔴 **Rosso**: Esperto - può gestire cani rosso, arancione, verde
+    - 🟠 **Arancione**: Base - può gestire cani arancione, verde
+    - 🟢 **Verde**: Principiante - può gestire SOLO cani verdi
+    
+    **Livelli di Difficoltà Cani:**
+    - ⚫ **Nero**: Molto impegnativo
+    - 🔴 **Rosso**: Impegnativo
+    - 🟠 **Arancione**: Medio
+    - 🟢 **Verde**: Facile
+    
+    ---
+    """)
+    
+    col_tab1, col_tab2 = st.columns(2)
+    
+    with col_tab1:
+        st.subheader("🐕 Colori Cani")
+        if not df_c.empty:
+            df_cani_colori = df_c[['nome', 'colore']].copy() if 'colore' in df_c.columns else df_c[['nome']].copy()
+            if 'colore' not in df_cani_colori.columns:
+                df_cani_colori['colore'] = 'verde'
+            
+            # Conta cani per colore
+            colori_count = df_cani_colori['colore'].value_counts()
+            for colore in ['nero', 'rosso', 'arancione', 'verde']:
+                count = colori_count.get(colore, 0)
+                emoji = {'nero': '⚫', 'rosso': '🔴', 'arancione': '🟠', 'verde': '🟢'}
+                st.metric(f"{emoji[colore]} {colore.capitalize()}", count)
+            
+            st.divider()
+            st.dataframe(df_cani_colori, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nessun cane caricato da Google Sheets")
+    
+    with col_tab2:
+        st.subheader("👤 Livelli Volontari")
+        if not df_v.empty:
+            df_vol_colori = df_v[['nome', 'colore']].copy() if 'colore' in df_v.columns else df_v[['nome']].copy()
+            if 'colore' not in df_vol_colori.columns:
+                df_vol_colori['colore'] = 'verde'
+            
+            # Conta volontari per colore
+            colori_count = df_vol_colori['colore'].value_counts()
+            for colore in ['nero', 'rosso', 'arancione', 'verde']:
+                count = colori_count.get(colore, 0)
+                emoji = {'nero': '⚫', 'rosso': '🔴', 'arancione': '🟠', 'verde': '🟢'}
+                st.metric(f"{emoji[colore]} {colore.capitalize()}", count)
+            
+            st.divider()
+            st.dataframe(df_vol_colori, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nessun volontario caricato da Google Sheets")
+    
+    st.divider()
+    
+    st.subheader("🔍 Verifica Compatibilità")
+    st.markdown("*Verifica se un volontario può gestire un cane specifico*")
+    
+    col_ver1, col_ver2 = st.columns(2)
+    
+    with col_ver1:
+        cane_test = st.selectbox("Seleziona Cane", df_c['nome'].tolist() if not df_c.empty else [])
+    
+    with col_ver2:
+        vol_test = st.selectbox("Seleziona Volontario", df_v['nome'].tolist() if not df_v.empty else [])
+    
+    if cane_test and vol_test:
+        colore_cane = get_colore_cane(cane_test, df_c)
+        colore_vol = get_colore_volontario(vol_test, df_v)
+        compatibile, msg = verifica_compatibilita_colore(colore_vol, colore_cane)
+        
+        st.markdown("---")
+        col_res1, col_res2, col_res3 = st.columns(3)
+        
+        with col_res1:
+            emoji_cane = {'nero': '⚫', 'rosso': '🔴', 'arancione': '🟠', 'verde': '🟢'}
+            st.info(f"🐕 **{cane_test}**\n\nLivello: {emoji_cane.get(colore_cane, '⚪')} {colore_cane.upper()}")
+        
+        with col_res2:
+            emoji_vol = {'nero': '⚫', 'rosso': '🔴', 'arancione': '🟠', 'verde': '🟢'}
+            st.info(f"👤 **{vol_test}**\n\nLivello: {emoji_vol.get(colore_vol, '⚪')} {colore_vol.upper()}")
+        
+        with col_res3:
+            if compatibile:
+                st.success(f"**Risultato:**\n\n{msg}")
+            else:
+                st.error(f"**Risultato:**\n\n{msg}")
+    
+    st.divider()
+    st.info("""
+    💡 **Nota:** I colori vengono caricati dal Google Sheets. Assicurati che le colonne 'colore' 
+    siano presenti e popolate correttamente nei fogli "Cani" e "Volontari".
+    
+    Valori accettati: `nero`, `rosso`, `arancione`, `verde` (minuscolo o maiuscolo)
+    """)
