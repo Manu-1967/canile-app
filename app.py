@@ -207,6 +207,20 @@ with tab2:
             use_container_width=True
         )
 
+
+with tab2:
+    st.subheader("Anagrafica cani caricata")
+
+    df = carica_anagrafica()
+
+    if df.empty:
+        st.info("Nessuna anagrafica caricata")
+    else:
+        st.dataframe(
+            df,
+            use_container_width=True
+        )
+
 #with st.sidebar:
    #  st.subheader("📂 Importazione PDF")
 
