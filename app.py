@@ -190,13 +190,13 @@ with st.sidebar:
     ora_f = st.time_input("Ora Fine", datetime.strptime("18:00", "%H:%M"))
     st.divider()
 
-# with st.sidebar:
-    # st.markdown("### 📋 Stato anagrafica cani")
-    # st.dataframe(carica_anagrafica())
+ with st.sidebar:
+     st.markdown("### 📋 Stato anagrafica cani")
+     st.dataframe(carica_anagrafica())
 
-with carica_anagrafica:
-    st.metric("🐕 Cani in anagrafica", len(carica_anagrafica()))
-    st.markdown("Usa la sidebar per importare i PDF.")
+#with carica_anagrafica:
+ #   st.metric("🐕 Cani in anagrafica", len(carica_anagrafica()))
+  #  st.markdown("Usa la sidebar per importare i PDF.")
 
 
 # with tab2:
