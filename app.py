@@ -194,32 +194,24 @@ with st.sidebar:
     # st.markdown("### 📋 Stato anagrafica cani")
     # st.dataframe(carica_anagrafica())
 
-with tab2:
-    st.subheader("Anagrafica cani caricata")
-
-    df = carica_anagrafica()
-
-    if df.empty:
-        st.info("Nessuna anagrafica caricata")
-    else:
-        st.dataframe(
-            df,
-            use_container_width=True
-        )
+with tab1:
+    st.metric("🐕 Cani in anagrafica", len(carica_anagrafica()))
+    st.markdown("Usa la sidebar per importare i PDF.")
 
 
-with tab2:
-    st.subheader("Anagrafica cani caricata")
+# with tab2:
+  #  st.subheader("Anagrafica cani caricata")
 
-    df = carica_anagrafica()
+   # df = carica_anagrafica()
 
-    if df.empty:
-        st.info("Nessuna anagrafica caricata")
-    else:
-        st.dataframe(
-            df,
-            use_container_width=True
-        )
+    #if df.empty:
+     #   st.info("Nessuna anagrafica caricata")
+   # else:
+    #    st.dataframe(
+     #       df,
+      #      use_container_width=True
+       # )
+
 
 #with st.sidebar:
    #  st.subheader("📂 Importazione PDF")
