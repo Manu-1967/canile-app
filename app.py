@@ -124,6 +124,19 @@ def genera_excel_volontari():
 
     return file_excel
 
+def genera_excel_programma(programma, data_turno):
+    """Genera un file Excel con il programma completo del turno."""
+    df = pd.DataFrame(programma)
+    
+    # Riordina le colonne
+    cols_order = ["Orario", "Cane", "Volontario", "Luogo", "Tipo", "CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
+    df = df[cols_order]
+    
+    file_excel = f"programma_turno_{data_turno.strftime('%Y%m%d')}.xlsx"
+    df.to_excel(file_excel, index=False)
+    
+    return file_excel
+
 def genera_pdf_volontari():
     """Genera un file PDF con l'anagrafica dei cani."""
     from fpdf import FPDF
@@ -201,6 +214,33 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
                 if reattivita_cane_corrente > 5 or reattivita_cane_adiacente > 5:
                     return False
     return True
+
+def get_anagrafica_cane(nome_cane):
+    """Recupera i dati dell'anagrafica di un cane dal database."""
+    conn = sqlite3.connect('canile.db')
+    c = conn.cursor()
+    c.execute("SELECT cibo, guinzaglieria, strumenti, attivita, note, tempo FROM anagrafica_cani WHERE nome=?", (nome_cane,))
+    result = c.fetchone()
+    conn.close()
+    
+    if result:
+        return {
+            "cibo": result[0] or "",
+            "guinzaglieria": result[1] or "",
+            "strumenti": result[2] or "",
+            "attivita": result[3] or "",
+            "note": result[4] or "",
+            "tempo": result[5] or ""
+        }
+    else:
+        return {
+            "cibo": "",
+            "guinzaglieria": "",
+            "strumenti": "",
+            "attivita": "",
+            "note": "",
+            "tempo": ""
+        }
 
 def salva_programma_nel_db(programma, data_sel):
     """Salva il programma giornaliero nello storico del database."""
@@ -298,13 +338,22 @@ with tab_prog:
         m_ora = st.time_input("Orario Inizio", ora_i)
         if st.button("➕ Aggiungi Turno Manuale"):
             if m_cane != "-" and m_luo != "-" and m_vols:
+                # Recupera dati anagrafica del cane
+                ana_data = get_anagrafica_cane(m_cane)
+                
                 st.session_state.programma.append({
                     "Orario": m_ora.strftime('%H:%M'), 
                     "Cane": m_cane, 
                     "Volontario": ", ".join(m_vols), 
                     "Luogo": m_luo, 
-                    "Attività": "Manuale", 
-                    "Inizio_Sort": m_ora.strftime('%H:%M')
+                    "Tipo": "Manuale",
+                    "Inizio_Sort": m_ora.strftime('%H:%M'),
+                    "CIBO": ana_data["cibo"],
+                    "GUINZAGLIERIA": ana_data["guinzaglieria"],
+                    "STRUMENTI": ana_data["strumenti"],
+                    "ATTIVITÀ": ana_data["attivita"],
+                    "NOTE": ana_data["note"],
+                    "TEMPO": ana_data["tempo"]
                 })
                 st.success(f"✅ Turno aggiunto: {m_cane} alle {m_ora.strftime('%H:%M')}")
                 st.rerun()
@@ -322,14 +371,22 @@ with tab_prog:
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30)
         
-        manuali = [r for r in st.session_state.programma if r.get("Attività") == "Manuale"]
+        manuali = [r for r in st.session_state.programma if r.get("Tipo") == "Manuale"]
+        
+        # Briefing iniziale (senza dati anagrafica perché è per tutti)
         st.session_state.programma = [{
             "Orario": start_dt.strftime('%H:%M'), 
             "Cane": "TUTTI", 
             "Volontario": "TUTTI", 
             "Luogo": "Ufficio", 
-            "Attività": "Briefing", 
-            "Inizio_Sort": start_dt.strftime('%H:%M')
+            "Tipo": "Briefing", 
+            "Inizio_Sort": start_dt.strftime('%H:%M'),
+            "CIBO": "",
+            "GUINZAGLIERIA": "",
+            "STRUMENTI": "",
+            "ATTIVITÀ": "",
+            "NOTE": "",
+            "TEMPO": ""
         }]
         
         cani_fatti = [m["Cane"] for m in manuali]
@@ -355,25 +412,42 @@ with tab_prog:
                         lead = v_scores[0][0]
                         v_liberi.remove(lead)
                         
+                        # Recupera dati anagrafica del cane
+                        ana_data = get_anagrafica_cane(cane)
+                        
                         st.session_state.programma.append({
                             "Orario": ora_s, 
                             "Cane": cane, 
                             "Volontario": lead, 
                             "Luogo": campo_scelto, 
-                            "Attività": "Auto", 
-                            "Inizio_Sort": ora_s
+                            "Tipo": "Auto", 
+                            "Inizio_Sort": ora_s,
+                            "CIBO": ana_data["cibo"],
+                            "GUINZAGLIERIA": ana_data["guinzaglieria"],
+                            "STRUMENTI": ana_data["strumenti"],
+                            "ATTIVITÀ": ana_data["attivita"],
+                            "NOTE": ana_data["note"],
+                            "TEMPO": ana_data["tempo"]
                         })
                         break
             curr_t += timedelta(minutes=45)
         
         st.session_state.programma.extend(manuali)
+        
+        # Pasti finali (senza dati anagrafica perché è per tutti)
         st.session_state.programma.append({
             "Orario": pasti_dt.strftime('%H:%M'), 
             "Cane": "TUTTI", 
             "Volontario": "TUTTI", 
             "Luogo": "Box", 
-            "Attività": "Pasti", 
-            "Inizio_Sort": pasti_dt.strftime('%H:%M')
+            "Tipo": "Pasti", 
+            "Inizio_Sort": pasti_dt.strftime('%H:%M'),
+            "CIBO": "",
+            "GUINZAGLIERIA": "",
+            "STRUMENTI": "",
+            "ATTIVITÀ": "",
+            "NOTE": "",
+            "TEMPO": ""
         })
         conn.close()
         st.success("✅ Programma generato automaticamente")
@@ -397,9 +471,41 @@ with tab_prog:
         st.subheader("📋 Programma Corrente")
         df_p = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
         # Riordina le colonne per una migliore visualizzazione
-        cols_order = ["Orario", "Cane", "Volontario", "Luogo", "Attività"]
+        cols_order = ["Orario", "Cane", "Volontario", "Luogo", "Tipo", "CIBO", "GUINZAGLIERIA", "STRUMENTI", "ATTIVITÀ", "NOTE", "TEMPO"]
         df_p_display = df_p[cols_order]
-        st.dataframe(df_p_display, use_container_width=True, hide_index=True)
+        
+        st.dataframe(
+            df_p_display, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Orario": st.column_config.TextColumn("Orario", width="small"),
+                "Cane": st.column_config.TextColumn("Cane", width="medium"),
+                "Volontario": st.column_config.TextColumn("Volontario", width="medium"),
+                "Luogo": st.column_config.TextColumn("Luogo", width="medium"),
+                "Tipo": st.column_config.TextColumn("Tipo", width="small"),
+                "CIBO": st.column_config.TextColumn("CIBO", width="medium"),
+                "GUINZAGLIERIA": st.column_config.TextColumn("GUINZAGLIERIA", width="medium"),
+                "STRUMENTI": st.column_config.TextColumn("STRUMENTI", width="medium"),
+                "ATTIVITÀ": st.column_config.TextColumn("ATTIVITÀ", width="medium"),
+                "NOTE": st.column_config.TextColumn("NOTE", width="large"),
+                "TEMPO": st.column_config.TextColumn("TEMPO", width="small")
+            }
+        )
+        
+        # Pulsante per esportare il programma
+        st.divider()
+        col_exp1, col_exp2 = st.columns(2)
+        if col_exp1.button("📊 Esporta Programma in Excel", use_container_width=True):
+            excel_file = genera_excel_programma(st.session_state.programma, data_t)
+            with open(excel_file, "rb") as f:
+                st.download_button(
+                    "⬇️ Scarica Programma Excel",
+                    f,
+                    file_name=excel_file,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
     else:
         st.info("ℹ️ Nessun turno programmato. Usa 'Genera Automatico' o 'Inserimento Manuale'")
 
