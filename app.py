@@ -219,27 +219,36 @@ def get_anagrafica_cane(nome_cane):
     """Recupera i dati dell'anagrafica di un cane dal database."""
     conn = sqlite3.connect('canile.db')
     c = conn.cursor()
+    
+    # Prova con il nome esatto
     c.execute("SELECT cibo, guinzaglieria, strumenti, attivita, note, tempo FROM anagrafica_cani WHERE nome=?", (nome_cane,))
     result = c.fetchone()
+    
+    # Se non trova, prova con nome in maiuscolo
+    if not result:
+        c.execute("SELECT cibo, guinzaglieria, strumenti, attivita, note, tempo FROM anagrafica_cani WHERE UPPER(nome)=?", (nome_cane.upper(),))
+        result = c.fetchone()
+    
     conn.close()
     
     if result:
         return {
-            "cibo": result[0] or "",
-            "guinzaglieria": result[1] or "",
-            "strumenti": result[2] or "",
-            "attivita": result[3] or "",
-            "note": result[4] or "",
-            "tempo": result[5] or ""
+            "cibo": result[0] if result[0] else "",
+            "guinzaglieria": result[1] if result[1] else "",
+            "strumenti": result[2] if result[2] else "",
+            "attivita": result[3] if result[3] else "",
+            "note": result[4] if result[4] else "",
+            "tempo": result[5] if result[5] else ""
         }
     else:
+        # Se il cane non è in anagrafica, restituisce valori vuoti
         return {
-            "cibo": "",
-            "guinzaglieria": "",
-            "strumenti": "",
-            "attivita": "",
-            "note": "",
-            "tempo": ""
+            "cibo": "N/D",
+            "guinzaglieria": "N/D",
+            "strumenti": "N/D",
+            "attivita": "N/D",
+            "note": "N/D",
+            "tempo": "N/D"
         }
 
 def salva_programma_nel_db(programma, data_sel):
@@ -314,6 +323,15 @@ with st.sidebar:
     # Mostra conteggio cani in anagrafica
     df_ana = carica_anagrafica()
     st.metric("🐕 Cani in anagrafica", len(df_ana))
+    
+    # Debug: mostra quali cani sono in anagrafica
+    if len(df_ana) > 0:
+        with st.expander("🔍 Cani caricati in anagrafica"):
+            st.write("**Nomi nel database:**")
+            for nome in df_ana['nome'].tolist():
+                st.text(f"• {nome}")
+    else:
+        st.warning("⚠️ Nessun cane in anagrafica! Carica i PDF.")
 
 # Carica dati da Google Sheets
 df_c = load_gsheets("Cani")
@@ -341,6 +359,10 @@ with tab_prog:
                 # Recupera dati anagrafica del cane
                 ana_data = get_anagrafica_cane(m_cane)
                 
+                # Verifica se il cane è in anagrafica
+                if ana_data["cibo"] == "N/D":
+                    st.warning(f"⚠️ Il cane '{m_cane}' non ha un'anagrafica PDF caricata. Carica il PDF dalla sidebar.")
+                
                 st.session_state.programma.append({
                     "Orario": m_ora.strftime('%H:%M'), 
                     "Cane": m_cane, 
@@ -365,6 +387,14 @@ with tab_prog:
     c1, c2, c3 = st.columns(3)
     
     if c1.button("🤖 Genera / Completa Automatico", use_container_width=True):
+        # Verifica se ci sono cani in anagrafica
+        df_ana_check = carica_anagrafica()
+        cani_mancanti = [c for c in c_p if c.upper() not in df_ana_check['nome'].str.upper().tolist()]
+        
+        if cani_mancanti:
+            st.warning(f"⚠️ I seguenti cani NON sono presenti nell'anagrafica PDF: {', '.join(cani_mancanti)}")
+            st.info("💡 Carica i PDF di questi cani dalla sidebar per avere le informazioni complete nel programma")
+        
         conn = sqlite3.connect('canile.db')
         conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
