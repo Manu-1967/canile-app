@@ -194,7 +194,7 @@ with st.sidebar:
     # st.markdown("### 📋 Stato anagrafica cani")
     # st.dataframe(carica_anagrafica())
 
-with tab1:
+with anagrafica:
     st.metric("🐕 Cani in anagrafica", len(carica_anagrafica()))
     st.markdown("Usa la sidebar per importare i PDF.")
 
