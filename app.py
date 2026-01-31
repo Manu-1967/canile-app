@@ -97,6 +97,8 @@ def genera_excel_volontari():
     return file_excel
 
 def genera_pdf_volontari():
+    from fpdf import FPDF
+    
     conn = sqlite3.connect("canile.db")
     df = pd.read_sql("SELECT * FROM anagrafica_cani", conn)
     conn.close()
@@ -125,22 +127,27 @@ def load_gsheets(sheet_name):
         df = pd.read_csv(url)
         df.columns = [c.strip().lower() for c in df.columns]
         if sheet_name == "Luoghi":
-            if 'automatico' not in df.columns: df['automatico'] = 'sì'
-            if 'adiacente' not in df.columns: df['adiacente'] = ''
+            if 'automatico' not in df.columns: 
+                df['automatico'] = 'sì'
+            if 'adiacente' not in df.columns: 
+                df['adiacente'] = ''
         if sheet_name == "Cani":
-            if 'reattività' not in df.columns: df['reattività'] = 0
+            if 'reattività' not in df.columns: 
+                df['reattività'] = 0
             df['reattività'] = pd.to_numeric(df['reattività'], errors='coerce').fillna(0)
         return df.dropna(how='all')
     except:
         return pd.DataFrame()
 
 def get_reattivita_cane(nome_cane, df_cani):
-    if df_cani.empty or 'reattività' not in df_cani.columns: return 0
+    if df_cani.empty or 'reattività' not in df_cani.columns: 
+        return 0
     riga = df_cani[df_cani['nome'] == nome_cane]
     return float(riga.iloc[0]['reattività']) if not riga.empty else 0
 
 def get_campi_adiacenti(campo, df_luoghi):
-    if df_luoghi.empty or 'adiacente' not in df_luoghi.columns: return []
+    if df_luoghi.empty or 'adiacente' not in df_luoghi.columns: 
+        return []
     riga = df_luoghi[df_luoghi['nome'] == campo]
     if not riga.empty:
         adiacenti_str = str(riga.iloc[0]['adiacente']).strip()
@@ -155,7 +162,8 @@ def campo_valido_per_reattivita(cane, campo, turni_attuali, ora_attuale_str, df_
         if turno["Orario"] == ora_attuale_str:
             if turno["Luogo"] in campi_adiacenti:
                 cane_adiacente = turno["Cane"]
-                if cane_adiacente in ["TUTTI", "Da assegnare"]: continue
+                if cane_adiacente in ["TUTTI", "Da assegnare"]: 
+                    continue
                 reattivita_cane_adiacente = get_reattivita_cane(cane_adiacente, df_cani)
                 if reattivita_cane_corrente > 5 or reattivita_cane_adiacente > 5:
                     return False
@@ -178,7 +186,8 @@ def salva_programma_nel_db(programma, data_sel):
 
 # Inizializzazione DB e sessione
 init_db()
-if 'programma' not in st.session_state: st.session_state.programma = []
+if 'programma' not in st.session_state: 
+    st.session_state.programma = []
 
 # --- INTERFACCIA ---
 st.title("🐾 Programma Canile 🐕")
@@ -190,37 +199,13 @@ with st.sidebar:
     ora_f = st.time_input("Ora Fine", datetime.strptime("18:00", "%H:%M"))
     st.divider()
 
- #with st.sidebar:
-  #   st.markdown("### 📋 Stato anagrafica cani")
-   #  st.dataframe(carica_anagrafica())
+    st.subheader("📂 Importazione PDF")
 
-#with carica_anagrafica:
- #   st.metric("🐕 Cani in anagrafica", len(carica_anagrafica()))
-  #  st.markdown("Usa la sidebar per importare i PDF.")
-
-
-# with tab2:
-  #  st.subheader("Anagrafica cani caricata")
-
-   # df = carica_anagrafica()
-
-    #if df.empty:
-     #   st.info("Nessuna anagrafica caricata")
-   # else:
-    #    st.dataframe(
-     #       df,
-      #      use_container_width=True
-       # )
-
-
-with st.sidebar:
-     st.subheader("📂 Importazione PDF")
-
-     pdf_files = st.file_uploader(
-         "Carica PDF cani",
-         type="pdf",
-         accept_multiple_files=True,
-         key="upload_pdf_cani"
+    pdf_files = st.file_uploader(
+        "Carica PDF cani",
+        type="pdf",
+        accept_multiple_files=True,
+        key="upload_pdf_cani"
     )
 
     if st.button("Aggiorna anagrafica da PDF"):
@@ -236,14 +221,13 @@ with st.sidebar:
                     salva_anagrafica_db(dati)
                     successi += 1
                 except Exception as e:
+                    errori.append(pdf.name)
                     st.error(f"Errore in {pdf.name}: {e}")
-
 
             st.success(f"{successi} anagrafiche caricate correttamente 🐕")
 
             if errori:
                 st.error(f"Errore nei file: {', '.join(errori)}")
-
 
 df_c = load_gsheets("Cani")
 df_v = load_gsheets("Volontari")
@@ -264,21 +248,32 @@ with tab_prog:
         m_ora = st.time_input("Orario Inizio", ora_i)
         if st.button("➕ Aggiungi Turno"):
             st.session_state.programma.append({
-                "Orario": m_ora.strftime('%H:%M'), "Cane": m_cane, 
-                "Volontario": ", ".join(m_vols), "Luogo": m_luo, 
-                "Attività": "Manuale", "Inizio_Sort": m_ora.strftime('%H:%M')
+                "Orario": m_ora.strftime('%H:%M'), 
+                "Cane": m_cane, 
+                "Volontario": ", ".join(m_vols), 
+                "Luogo": m_luo, 
+                "Attività": "Manuale", 
+                "Inizio_Sort": m_ora.strftime('%H:%M')
             })
             st.rerun()
 
     c1, c2, c3 = st.columns(3)
     if c1.button("🤖 Genera / Completa Automatico", use_container_width=True):
-        conn = sqlite3.connect('canile.db'); conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect('canile.db')
+        conn.row_factory = sqlite3.Row
         start_dt = datetime.combine(data_t, ora_i)
         end_dt = datetime.combine(data_t, ora_f)
         pasti_dt = end_dt - timedelta(minutes=30)
         
         manuali = [r for r in st.session_state.programma if r.get("Attività") == "Manuale"]
-        st.session_state.programma = [{"Orario": start_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", "Luogo": "Ufficio", "Attività": "Briefing", "Inizio_Sort": start_dt.strftime('%H:%M')}]
+        st.session_state.programma = [{
+            "Orario": start_dt.strftime('%H:%M'), 
+            "Cane": "TUTTI", 
+            "Volontario": "TUTTI", 
+            "Luogo": "Ufficio", 
+            "Attività": "Briefing", 
+            "Inizio_Sort": start_dt.strftime('%H:%M')
+        }]
         
         cani_fatti = [m["Cane"] for m in manuali]
         cani_restanti = [c for c in c_p if c not in cani_fatti]
@@ -291,7 +286,8 @@ with tab_prog:
             l_liberi = [l for l in luoghi_ok if l not in [m["Luogo"] for m in manuali if m["Orario"]==ora_s]]
             
             for _ in range(min(len(cani_restanti), len(l_liberi))):
-                if not v_liberi: break
+                if not v_liberi: 
+                    break
                 for idx, cane in enumerate(cani_restanti):
                     # Controllo reattività
                     if campo_valido_per_reattivita(cane, l_liberi[0], st.session_state.programma + manuali, ora_s, df_c, df_l):
@@ -303,12 +299,26 @@ with tab_prog:
                         lead = v_scores[0][0]
                         v_liberi.remove(lead)
                         
-                        st.session_state.programma.append({"Orario": ora_s, "Cane": cane, "Volontario": lead, "Luogo": campo_scelto, "Attività": "Auto", "Inizio_Sort": ora_s})
+                        st.session_state.programma.append({
+                            "Orario": ora_s, 
+                            "Cane": cane, 
+                            "Volontario": lead, 
+                            "Luogo": campo_scelto, 
+                            "Attività": "Auto", 
+                            "Inizio_Sort": ora_s
+                        })
                         break
             curr_t += timedelta(minutes=45)
         
         st.session_state.programma.extend(manuali)
-        st.session_state.programma.append({"Orario": pasti_dt.strftime('%H:%M'), "Cane": "TUTTI", "Volontario": "TUTTI", "Luogo": "Box", "Attività": "Pasti", "Inizio_Sort": pasti_dt.strftime('%H:%M')})
+        st.session_state.programma.append({
+            "Orario": pasti_dt.strftime('%H:%M'), 
+            "Cane": "TUTTI", 
+            "Volontario": "TUTTI", 
+            "Luogo": "Box", 
+            "Attività": "Pasti", 
+            "Inizio_Sort": pasti_dt.strftime('%H:%M')
+        })
         conn.close()
         st.rerun()
 
@@ -324,35 +334,16 @@ with tab_prog:
         df_p = pd.DataFrame(st.session_state.programma).sort_values("Inizio_Sort")
         st.data_editor(df_p, use_container_width=True, hide_index=True)
 
-# with tab_ana:
-    # st.header("📋 Database Anagrafica Cani")
-    # conn = sqlite3.connect('canile.db')
-    # df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
-    # conn.close()
-    # if not df_db.empty:
-      #   st.write("Dati estratti dai PDF caricati:")
-      #   st.dataframe(df_db, use_container_width=True, hide_index=True)
-    # else:
-      #   st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
-
-       
-    # st.header("Carica anagrafica cane")
-
-    # pdf_file = st.file_uploader("Carica PDF cane", type="pdf")
-
-    # if pdf_file:
-        # dati = parse_dog_pdf(pdf_file)
-        # salva_anagrafica_db(dati)
-
-        # st.success(f"Anagrafica {dati['nome']} caricata correttamente")
-
-        # if st.button("Genera programma volontari"):
-         # excel = genera_excel_volontari()
-         # pdf = genera_pdf_volontari()
-
-            # st.download_button("Scarica Excel", open(excel, "rb"), file_name=excel)
-            # st.download_button("Scarica PDF", open(pdf, "rb"), file_name=pdf)
-
+with tab_ana:
+    st.header("📋 Database Anagrafica Cani")
+    conn = sqlite3.connect('canile.db')
+    df_db = pd.read_sql_query("SELECT * FROM anagrafica_cani", conn)
+    conn.close()
+    if not df_db.empty:
+        st.write("Dati estratti dai PDF caricati:")
+        st.dataframe(df_db, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nessun cane in anagrafica. Carica i PDF dalla barra laterale.")
 
 with tab_stats:
     st.header("📊 Statistiche Storiche")
