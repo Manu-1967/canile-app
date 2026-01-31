@@ -221,7 +221,7 @@ with st.sidebar:
          type="pdf",
          accept_multiple_files=True,
          key="upload_pdf_cani"
-    #)
+    )
 
     if st.button("Aggiorna anagrafica da PDF"):
         if not pdf_files:
