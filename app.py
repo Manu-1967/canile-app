@@ -190,9 +190,9 @@ with st.sidebar:
     ora_f = st.time_input("Ora Fine", datetime.strptime("18:00", "%H:%M"))
     st.divider()
 
- with st.sidebar:
-     st.markdown("### 📋 Stato anagrafica cani")
-     st.dataframe(carica_anagrafica())
+ #with st.sidebar:
+  #   st.markdown("### 📋 Stato anagrafica cani")
+   #  st.dataframe(carica_anagrafica())
 
 #with carica_anagrafica:
  #   st.metric("🐕 Cani in anagrafica", len(carica_anagrafica()))
@@ -213,14 +213,14 @@ with st.sidebar:
        # )
 
 
-#with st.sidebar:
-   #  st.subheader("📂 Importazione PDF")
+with st.sidebar:
+     st.subheader("📂 Importazione PDF")
 
-    # pdf_files = st.file_uploader(
-        # "Carica PDF cani",
-        # type="pdf",
-        # accept_multiple_files=True,
-        # key="upload_pdf_cani"
+     pdf_files = st.file_uploader(
+         "Carica PDF cani",
+         type="pdf",
+         accept_multiple_files=True,
+         key="upload_pdf_cani"
     #)
 
     if st.button("Aggiorna anagrafica da PDF"):
