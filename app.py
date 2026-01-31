@@ -190,19 +190,32 @@ with st.sidebar:
     ora_f = st.time_input("Ora Fine", datetime.strptime("18:00", "%H:%M"))
     st.divider()
 
-with st.sidebar:
-    st.markdown("### 📋 Stato anagrafica cani")
-    st.dataframe(carica_anagrafica())
+# with st.sidebar:
+    # st.markdown("### 📋 Stato anagrafica cani")
+    # st.dataframe(carica_anagrafica())
 
-with st.sidebar:
-    st.subheader("📂 Importazione PDF")
+with tab2:
+    st.subheader("Anagrafica cani caricata")
 
-    pdf_files = st.file_uploader(
-        "Carica PDF cani",
-        type="pdf",
-        accept_multiple_files=True,
-        key="upload_pdf_cani"
-    )
+    df = carica_anagrafica()
+
+    if df.empty:
+        st.info("Nessuna anagrafica caricata")
+    else:
+        st.dataframe(
+            df,
+            use_container_width=True
+        )
+
+#with st.sidebar:
+   #  st.subheader("📂 Importazione PDF")
+
+    # pdf_files = st.file_uploader(
+        # "Carica PDF cani",
+        # type="pdf",
+        # accept_multiple_files=True,
+        # key="upload_pdf_cani"
+    #)
 
     if st.button("Aggiorna anagrafica da PDF"):
         if not pdf_files:
